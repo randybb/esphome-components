@@ -4,10 +4,14 @@ Custom ESPHome components, referenced from device configs via
 [`external_components`](https://esphome.io/components/external_components.html)
 (`source: github://randybb/esphome-components`) -- no fork of ESPHome itself.
 
-Private repo: components here aren't ready/intended for upstream contribution.
+```yaml
+external_components:
+  - source: github://randybb/esphome-components
+    components: [audio_spectrum]
+```
 
 ## Components
 
-- `tm1650` -- planned. Existing implementation at
-  [trip5/esphome-tm1650](https://github.com/trip5/esphome-tm1650) doesn't work,
-  needs a from-scratch rewrite.
+| Component | Description |
+|---|---|
+| [audio_spectrum](components/audio_spectrum/) | Pass-through speaker that computes a spectrum of the audio for a Winamp style analyzer display |
