@@ -4,6 +4,7 @@
 
 #include <cinttypes>
 #include <cmath>
+#include <cstring>
 
 extern "C" {
 #include <ant_radio.h>
@@ -14,18 +15,233 @@ namespace esphome::ant_plus {
 
 static const char *const TAG = "ant_plus";
 
-// No page for this long means the monitor is gone (off, out of range, no skin contact)
-static constexpr uint32_t STALE_MS = 5000;
-static constexpr uint8_t CHANNEL = 0;
+// No page for this long means the sensor is gone (off, asleep, out of range). Covers
+// five pages of a 0.5 Hz sensor (Tempe).
+static constexpr uint32_t STALE_MS = 10000;
 static constexpr uint8_t NETWORK = 0;
-// ANT+ heart rate monitor: device type 120, 4.06 Hz, 2457 MHz
-static constexpr uint8_t HRM_DEVICE_TYPE = 0x78;
-static constexpr uint16_t HRM_PERIOD = 8070;
-static constexpr uint8_t ANT_PLUS_FREQ = 57;
+static constexpr uint8_t ANT_PLUS_FREQ = 57;  // 2457 MHz
 static constexpr uint8_t CHANNEL_TYPE_SLAVE = 0x00;
+
+// ANT+ common page 82: battery status
+static constexpr uint8_t PAGE_BATTERY_STATUS = 0x52;
+// HRM page 7: battery status (HRM pages carry a toggle bit in bit 7)
+static constexpr uint8_t HRM_PAGE_BATTERY = 7;
+// FE-C
+static constexpr uint8_t FE_PAGE_GENERAL = 16;
+static constexpr uint8_t FE_PAGE_ROWER = 22;
+static constexpr uint8_t FE_STATE_IN_USE = 3;
+// Environment
+static constexpr uint8_t ENV_PAGE_TEMPERATURE = 1;
 
 // antr_on_message() carries no context, so it reaches the instance through this
 static AntPlus *global_ant_plus = nullptr;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
+
+static const char *type_name(DeviceType type) {
+  switch (type) {
+    case DeviceType::HEART_RATE:
+      return "heart rate";
+    case DeviceType::FITNESS_EQUIPMENT:
+      return "fitness equipment";
+    case DeviceType::TEMPERATURE:
+      return "temperature";
+    case DeviceType::BIKE_RADAR:
+      return "bike radar";
+  }
+  return "?";
+}
+
+static const char *ant_device_type_name(uint8_t type) {
+  switch (type & 0x7F) {
+    case 11:
+      return "power";
+    case 17:
+      return "fitness equipment";
+    case 25:
+      return "environment";
+    case 34:
+      return "shifting";
+    case 35:
+      return "bike light";
+    case 120:
+      return "heart rate";
+    case 121:
+      return "speed and cadence";
+    case 122:
+      return "cadence";
+    case 123:
+      return "speed";
+    case 124:
+      return "stride";
+    default:
+      return "device";
+  }
+}
+
+uint8_t AntPlusDevice::ant_device_type() const {
+  switch (this->type_) {
+    case DeviceType::HEART_RATE:
+      return 120;
+    case DeviceType::FITNESS_EQUIPMENT:
+      return 17;
+    case DeviceType::TEMPERATURE:
+      return 25;
+    case DeviceType::BIKE_RADAR:
+      return 40;
+  }
+  return 0;
+}
+
+uint16_t AntPlusDevice::channel_period() const {
+  switch (this->type_) {
+    case DeviceType::HEART_RATE:
+      return 8070;  // 4.06 Hz
+    case DeviceType::FITNESS_EQUIPMENT:
+      return 8192;  // 4 Hz
+    case DeviceType::TEMPERATURE:
+      // Environment allows 4 Hz or 0.5 Hz and the channel must match the sensor;
+      // Garmin's Tempe runs at 0.5 Hz
+      return 65535;
+    case DeviceType::BIKE_RADAR:
+      return 8192;  // 4 Hz
+  }
+  return 8192;
+}
+
+void AntPlusDevice::on_page(const uint8_t *page, uint32_t now) {
+  if (!this->connected_state_)
+    ESP_LOGI(TAG, "Receiving %s %" PRIu32, type_name(this->type_), this->ant_id_);
+  this->last_page_ms_ = now;
+  this->set_connected_(true);
+
+  if (page[0] == PAGE_BATTERY_STATUS) {
+    this->decode_battery_(page[6], page[7]);
+    return;
+  }
+  switch (this->type_) {
+    case DeviceType::HEART_RATE:
+      this->decode_heart_rate_(page);
+      break;
+    case DeviceType::FITNESS_EQUIPMENT:
+      this->decode_fitness_equipment_(page);
+      break;
+    case DeviceType::TEMPERATURE:
+      this->decode_temperature_(page);
+      break;
+    case DeviceType::BIKE_RADAR:
+      break;  // only its battery is read
+  }
+}
+
+void AntPlusDevice::decode_heart_rate_(const uint8_t *page) {
+  uint8_t number = page[0] & 0x7F;
+  if (number >= 0x10)
+    return;  // not an HRM page
+#ifdef USE_SENSOR
+  // byte 7 of every HRM page is the computed heart rate
+  if (this->heart_rate_ != nullptr)
+    this->heart_rate_->publish_state(page[7]);
+  if (number == HRM_PAGE_BATTERY) {
+    if (this->battery_level_ != nullptr && page[1] <= 100)
+      this->battery_level_->publish_state(page[1]);
+    this->decode_battery_(page[2], page[3]);
+  }
+#endif
+}
+
+void AntPlusDevice::decode_fitness_equipment_(const uint8_t *page) {
+  if (page[0] < FE_PAGE_GENERAL || page[0] > 25)
+    return;
+  // bits 4-6 of byte 7 are the FE state on every FE-specific page
+  uint8_t state = (page[7] >> 4) & 0x07;
+#ifdef USE_BINARY_SENSOR
+  if (this->in_use_ != nullptr)
+    this->in_use_->publish_state(state == FE_STATE_IN_USE);
+#endif
+#ifdef USE_SENSOR
+  if (page[0] == FE_PAGE_GENERAL) {
+    // [3] distance in m (rolls over at 256), [4-5] speed in 0.001 m/s
+    if (this->last_distance_ >= 0)
+      this->total_distance_ += (page[3] - this->last_distance_) & 0xFF;
+    this->last_distance_ = page[3];
+    if (this->distance_ != nullptr)
+      this->distance_->publish_state(this->total_distance_);
+    uint16_t speed = page[4] | (page[5] << 8);
+    if (this->speed_ != nullptr && speed != 0xFFFF)
+      this->speed_->publish_state(speed * 0.001f);
+    if (this->heart_rate_ != nullptr && page[6] != 0xFF)
+      this->heart_rate_->publish_state(page[6]);
+  } else if (page[0] == FE_PAGE_ROWER) {
+    // [4] stroke rate (strokes/min), [5-6] instantaneous power in W
+    if (this->cadence_ != nullptr && page[4] != 0xFF)
+      this->cadence_->publish_state(page[4]);
+    uint16_t power = page[5] | (page[6] << 8);
+    if (this->power_ != nullptr && power != 0xFFFF)
+      this->power_->publish_state(power);
+  }
+#endif
+}
+
+void AntPlusDevice::decode_temperature_(const uint8_t *page) {
+#ifdef USE_SENSOR
+  if (page[0] != ENV_PAGE_TEMPERATURE)
+    return;
+  // [3-5] 24 h low and high, two signed 12-bit values in 0.1 degC (0x800 = invalid),
+  // packed in opposite directions around byte 4: low = [3] + [4] bits 7:4 on top,
+  // high = [4] bits 3:0 at the bottom + [5]
+  auto publish_12bit = [](sensor::Sensor *s, uint16_t raw) {
+    if (s == nullptr || raw == 0x800)
+      return;
+    int16_t value = raw & 0x800 ? static_cast<int16_t>(raw | 0xF000) : static_cast<int16_t>(raw);
+    s->publish_state(value * 0.1f);
+  };
+  publish_12bit(this->temperature_min_, page[3] | ((page[4] >> 4) << 8));
+  publish_12bit(this->temperature_max_, (page[4] & 0x0F) | (page[5] << 4));
+  // [6-7] current temperature, signed, 0.01 degC
+  int16_t temperature = static_cast<int16_t>(page[6] | (page[7] << 8));
+  if (this->temperature_ != nullptr && temperature != INT16_MIN)
+    this->temperature_->publish_state(temperature * 0.01f);
+#endif
+}
+
+void AntPlusDevice::decode_battery_(uint8_t fractional, uint8_t coarse) {
+#ifdef USE_SENSOR
+  // coarse volts in bits 0-3 (0xF = invalid), fraction in 1/256 V
+  if (this->battery_voltage_ != nullptr && (coarse & 0x0F) != 0x0F)
+    this->battery_voltage_->publish_state((coarse & 0x0F) + fractional / 256.0f);
+#endif
+#ifdef USE_BINARY_SENSOR
+  // status in bits 4-6: 1 new, 2 good, 3 ok, 4 low, 5 critical (0, 6, 7 = none)
+  uint8_t status = (coarse >> 4) & 0x07;
+  if (this->battery_low_ != nullptr && status >= 1 && status <= 5)
+    this->battery_low_->publish_state(status >= 4);
+#endif
+}
+
+void AntPlusDevice::check_stale(uint32_t now) {
+  if (!this->connected_state_ || now - this->last_page_ms_ <= STALE_MS)
+    return;
+  ESP_LOGI(TAG, "Lost %s %" PRIu32, type_name(this->type_), this->ant_id_);
+  this->set_connected_(false);
+#ifdef USE_SENSOR
+  for (auto *s : {this->heart_rate_, this->power_, this->cadence_, this->speed_, this->temperature_,
+                  this->temperature_min_, this->temperature_max_}) {
+    if (s != nullptr)
+      s->publish_state(NAN);
+  }
+#endif
+#ifdef USE_BINARY_SENSOR
+  if (this->in_use_ != nullptr)
+    this->in_use_->publish_state(false);
+#endif
+}
+
+void AntPlusDevice::set_connected_(bool connected) {
+  this->connected_state_ = connected;
+#ifdef USE_BINARY_SENSOR
+  if (this->connected_ != nullptr)
+    this->connected_->publish_state(connected);
+#endif
+}
 
 void AntPlus::setup() {
   global_ant_plus = this;
@@ -33,76 +249,154 @@ void AntPlus::setup() {
   antr_err_t err = antr_init();
   if (err == 0)
     err = antr_network_address_set(NETWORK, this->network_key_.data());
-  if (err == 0)
-    err = antr_channel_assign(CHANNEL, CHANNEL_TYPE_SLAVE, NETWORK, 0);
-  // the device number is the low 16 bits of the ANT ID (0 = any). The top 4 bits ride
-  // in the transmission type's upper nibble, but its lower nibble is the sensor's own
-  // (0x01 for HRM), so the transmission type stays a wildcard
-  if (err == 0)
-    err = antr_channel_id_set(CHANNEL, this->device_number_ & 0xFFFF, HRM_DEVICE_TYPE, 0);
-  if (err == 0)
-    err = antr_channel_period_set(CHANNEL, HRM_PERIOD);
-  if (err == 0)
-    err = antr_channel_radio_freq_set(CHANNEL, ANT_PLUS_FREQ);
-  if (err == 0)
-    err = antr_channel_open_with_offset(CHANNEL, 0);
   if (err != 0) {
     ESP_LOGE(TAG, "ANT setup failed: 0x%02X", err);
     this->mark_failed();
+    return;
   }
+  for (uint8_t channel = 0; channel < this->devices_.size(); channel++) {
+    auto *device = this->devices_[channel];
+    // the device number is the low 16 bits of the ANT ID (0 = any). The top 4 bits
+    // ride in the transmission type's upper nibble, but its lower nibble is the
+    // sensor's own, so the transmission type stays a wildcard
+    err = antr_channel_assign(channel, CHANNEL_TYPE_SLAVE, NETWORK, 0);
+    if (err == 0)
+      err = antr_channel_id_set(channel, device->get_ant_id() & 0xFFFF, device->ant_device_type(), 0);
+    if (err == 0)
+      err = antr_channel_period_set(channel, device->channel_period());
+    if (err == 0)
+      err = antr_channel_radio_freq_set(channel, ANT_PLUS_FREQ);
+    if (err != 0 || !this->open_channel_(channel)) {
+      ESP_LOGE(TAG, "Channel %u setup failed: 0x%02X", channel, err);
+      this->mark_failed();
+      return;
+    }
+  }
+#ifdef USE_BINARY_SENSOR
+  if (this->unknown_device_ != nullptr)
+    this->discovery_ = this->setup_discovery_channel_(this->devices_.size());
+#endif
+}
+
+bool AntPlus::setup_discovery_channel_(uint8_t channel) {
+  // any ANT+ device type and number, minus the configured ones
+  antr_err_t err = antr_channel_assign(channel, CHANNEL_TYPE_SLAVE, NETWORK, 0);
+  if (err == 0)
+    err = antr_channel_id_set(channel, 0, 0, 0);
+  if (err == 0)
+    err = antr_channel_period_set(channel, 8192);
+  if (err == 0)
+    err = antr_channel_radio_freq_set(channel, ANT_PLUS_FREQ);
+  for (uint8_t i = 0; err == 0 && i < this->devices_.size(); i++) {
+    uint32_t id = this->devices_[i]->get_ant_id();
+    // device type 0: a known device's other profiles (the HRM-Pro's stride channel
+    // shares its device number) aren't "unknown" either
+    const uint8_t entry[4] = {static_cast<uint8_t>(id & 0xFF), static_cast<uint8_t>((id >> 8) & 0xFF), 0, 0};
+    err = antr_id_list_add(channel, entry, i);
+  }
+  if (err == 0)
+    err = antr_id_list_config(channel, this->devices_.size(), 1);
+  if (err != 0) {
+    ESP_LOGW(TAG, "Discovery channel setup failed: 0x%02X", err);
+    return false;
+  }
+  return this->open_channel_(channel);
+}
+
+void AntPlus::on_discovery_page_(uint32_t now) {
+  this->last_unknown_ms_ = now;
+  if (this->unknown_state_)
+    return;
+  this->unknown_state_ = true;
+  uint16_t device_number;
+  uint8_t device_type, trans_type;
+  if (antr_channel_id_get(this->devices_.size(), &device_number, &device_type, &trans_type) == 0)
+    ESP_LOGI(TAG, "Unknown ANT+ %s in range, ANT ID %" PRIu32 " (device type %u)", ant_device_type_name(device_type),
+             (uint32_t(trans_type & 0xF0) << 12) | device_number, device_type & 0x7F);
+#ifdef USE_BINARY_SENSOR
+  if (this->unknown_device_ != nullptr)
+    this->unknown_device_->publish_state(true);
+#endif
+}
+
+bool AntPlus::open_channel_(uint8_t channel) {
+  antr_err_t err = antr_channel_open_with_offset(channel, 0);
+  if (err != 0)
+    ESP_LOGW(TAG, "Opening channel %u failed: 0x%02X", channel, err);
+  return err == 0;
 }
 
 void AntPlus::loop() {
-  if (uint8_t event = this->last_event_.exchange(0); event != 0)
-    ESP_LOGD(TAG, "Channel event 0x%02X", event);
-  if (this->reopen_.exchange(false)) {
-    // the search timed out and closed the channel: keep looking for the monitor
-    antr_err_t err = antr_channel_open_with_offset(CHANNEL, 0);
-    if (err != 0)
-      ESP_LOGW(TAG, "Reopening the channel failed: 0x%02X", err);
-  }
-
-  if (this->have_data_.exchange(false)) {
-    if (this->published_nan_) {
-      uint16_t device_number;
-      uint8_t device_type, trans_type;
-      if (antr_channel_id_get(CHANNEL, &device_number, &device_type, &trans_type) == 0)
-        this->paired_id_ = (uint32_t(trans_type & 0xF0) << 12) | device_number;
-      ESP_LOGI(TAG, "Receiving heart rate monitor %" PRIu32, this->paired_id_);
+  uint32_t now = millis();
+  uint8_t tail = this->tail_.load(std::memory_order_relaxed);
+  while (tail != this->head_.load(std::memory_order_acquire)) {
+    const Message &msg = this->queue_[tail % QUEUE_SIZE];
+    bool discovery = this->discovery_ && msg.channel == this->devices_.size();
+    if (msg.channel < this->devices_.size() || discovery) {
+      if (msg.id == ANTW_MESG_RESPONSE_EVENT_ID) {
+        // search timed out (or we closed it): keep looking. A paired wildcard channel
+        // keeps the found ID, so the discovery channel goes back to "any" first
+        if (msg.data[0] == ANTW_EVENT_CHANNEL_CLOSED) {
+          if (discovery)
+            antr_channel_id_set(msg.channel, 0, 0, 0);
+          this->open_channel_(msg.channel);
+        }
+      } else if (discovery) {
+        this->on_discovery_page_(now);
+      } else {
+        this->devices_[msg.channel]->on_page(msg.data, now);
+      }
     }
-    this->published_nan_ = false;
-    if (this->heart_rate_sensor_ != nullptr)
-      this->heart_rate_sensor_->publish_state(this->heart_rate_.load());
-  } else if (!this->published_nan_ && millis() - this->last_page_ms_.load() > STALE_MS) {
-    ESP_LOGI(TAG, "Heart rate monitor lost");
-    if (this->heart_rate_sensor_ != nullptr)
-      this->heart_rate_sensor_->publish_state(NAN);
-    this->published_nan_ = true;
+    tail++;
+    this->tail_.store(tail, std::memory_order_release);
   }
+  bool any_connected = false;
+  for (auto *device : this->devices_) {
+    device->check_stale(now);
+    any_connected |= device->is_connected();
+  }
+  if (this->unknown_state_ && now - this->last_unknown_ms_ > STALE_MS) {
+    this->unknown_state_ = false;
+    // unpair the discovery channel so it can find the next unknown device
+    antr_channel_close(this->devices_.size());
+  }
+#ifdef USE_BINARY_SENSOR
+  if (this->connected_ != nullptr)
+    this->connected_->publish_state(any_connected);
+  if (this->unknown_device_ != nullptr)
+    this->unknown_device_->publish_state(this->unknown_state_);
+#endif
+  if (uint32_t dropped = this->dropped_.exchange(0); dropped != 0)
+    ESP_LOGW(TAG, "%" PRIu32 " ANT messages dropped", dropped);
 }
 
 void AntPlus::dump_config() {
-  ESP_LOGCONFIG(TAG,
-                "ANT+ (RadiANT):\n"
-                "  Heart rate monitor ANT ID: %" PRIu32 "%s",
-                this->device_number_, this->device_number_ == 0 ? " (any)" : "");
-  LOG_SENSOR("  ", "Heart Rate", this->heart_rate_sensor_);
+  ESP_LOGCONFIG(TAG, "ANT+ (RadiANT):");
+  for (auto *device : this->devices_)
+    ESP_LOGCONFIG(TAG, "  %s, ANT ID %" PRIu32 "%s", type_name(device->get_type()), device->get_ant_id(),
+                  device->get_ant_id() == 0 ? " (any)" : "");
 }
 
 void AntPlus::on_message(uint8_t id, const uint8_t *data, uint8_t len) {
-  if (len < 1 || data[0] != CHANNEL)
-    return;
+  Message msg{};
   if ((id == ANTW_MESG_BROADCAST_DATA_ID || id == ANTW_MESG_ACKNOWLEDGED_DATA_ID) && len >= 9) {
-    // byte 7 of every ANT+ HRM page is the computed heart rate
-    this->heart_rate_.store(data[8]);
-    this->last_page_ms_.store(millis());
-    this->have_data_.store(true);
-  } else if (id == ANTW_MESG_RESPONSE_EVENT_ID && len >= 3 && data[1] == ANTW_MESG_EVENT_ID) {
-    if (data[2] != ANTW_EVENT_RX_FAIL)
-      this->last_event_.store(data[2]);
-    if (data[2] == ANTW_EVENT_CHANNEL_CLOSED)
-      this->reopen_.store(true);
+    msg.id = id;
+    std::memcpy(msg.data, data + 1, 8);
+  } else if (id == ANTW_MESG_RESPONSE_EVENT_ID && len >= 3 && data[1] == ANTW_MESG_EVENT_ID &&
+             data[2] == ANTW_EVENT_CHANNEL_CLOSED) {
+    msg.id = id;
+    msg.data[0] = data[2];
+  } else {
+    return;
   }
+  msg.channel = data[0];
+  uint8_t head = this->head_.load(std::memory_order_relaxed);
+  if (static_cast<uint8_t>(head - this->tail_.load(std::memory_order_acquire)) >= QUEUE_SIZE) {
+    this->dropped_.fetch_add(1);
+    return;
+  }
+  this->queue_[head % QUEUE_SIZE] = msg;
+  this->head_.store(head + 1, std::memory_order_release);
 }
 
 }  // namespace esphome::ant_plus
