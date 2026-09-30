@@ -153,5 +153,14 @@ commands 0x8000+?) has to be sniffed first.
 the reverse of the Edge Remote, ESPHome as the remote. Start/stop recording and
 take a photo from Home Assistant (page 16 audio/video commands, e.g. `RECORD`,
 or page 73), and read what the camera broadcasts (recording state, battery?).
+* `stride` type: ANT+ Stride Based Speed and Distance (SDM, device type 124), from
+a Garmin Foot Pod or the HRM-Pro's own stride channel. Speed/pace, cadence
+(steps/min), distance and stride count (with rollover), battery. RadiANT has a
+decoder (`profile_sdm`).
+* `heart_rate`: RR intervals and HRV (e.g. RMSSD) from the beat event time and
+count every HRM page carries.
+* Not possible: Garmin running dynamics (vertical oscillation, ground contact
+time...) and the HRM-Pro/Tri stored data go over proprietary Garmin channels,
+not ANT+.
 * Verify the untested types on real devices: `power`, `speed`,
 `fitness_equipment`, `shifting`.
