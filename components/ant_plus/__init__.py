@@ -15,6 +15,10 @@ from esphome.const import (
     CONF_BATTERY_VOLTAGE,
     CONF_DISTANCE,
     CONF_ID,
+    CONF_LATITUDE,
+    CONF_LONGITUDE,
+    CONF_NAME,
+    CONF_SENSOR,
     CONF_POWER,
     CONF_SPEED,
     CONF_TEMPERATURE,
@@ -56,6 +60,10 @@ CONF_WHEEL_CIRCUMFERENCE = "wheel_circumference"
 CONF_NETWORK_KEY = "network_key"
 CONF_TEMPERATURE_MAX = "temperature_max"
 CONF_UNKNOWN_DEVICE = "unknown_device"
+CONF_TRANSMITTERS = "transmitters"
+CONF_ASSETS = "assets"
+CONF_COLOUR = "colour"
+CONF_ASSET_TYPE = "asset_type"
 CONF_TEMPERATURE_MIN = "temperature_min"
 
 # RadiANT: clean-room ANT+ compatible link layer for Zephyr (Apache-2.0)
@@ -65,6 +73,7 @@ RADIANT_REF = "6979eb9ae9417dee5d9de43df5f816765a901048"
 ant_plus_ns = cg.esphome_ns.namespace("ant_plus")
 AntPlus = ant_plus_ns.class_("AntPlus", cg.Component)
 AntPlusDevice = ant_plus_ns.class_("AntPlusDevice")
+AntPlusTransmitter = ant_plus_ns.class_("AntPlusTransmitter")
 DeviceType = ant_plus_ns.enum("DeviceType", is_class=True)
 
 TYPE_HEART_RATE = "heart_rate"
@@ -74,6 +83,7 @@ TYPE_BIKE_RADAR = "bike_radar"
 TYPE_POWER = "power"
 TYPE_SPEED = "speed"
 TYPE_SHIFTING = "shifting"
+TYPE_ASSET_TRACKER = "asset_tracker"
 DEVICE_TYPES = {
     TYPE_HEART_RATE: DeviceType.HEART_RATE,
     TYPE_FITNESS_EQUIPMENT: DeviceType.FITNESS_EQUIPMENT,
@@ -82,6 +92,7 @@ DEVICE_TYPES = {
     TYPE_POWER: DeviceType.POWER,
     TYPE_SPEED: DeviceType.SPEED,
     TYPE_SHIFTING: DeviceType.SHIFTING,
+    TYPE_ASSET_TRACKER: DeviceType.ASSET_TRACKER,
 }
 
 
@@ -229,14 +240,67 @@ DEVICE_SCHEMA = cv.typed_schema(
     key=CONF_TYPE,
 )
 
+ASSET_SCHEMA = cv.Schema(
+    {
+        # shown on the watch; the profile carries 10 characters
+        cv.Required(CONF_NAME): cv.All(cv.string_strict, cv.Length(min=1, max=10)),
+        # 3-3-2 RGB, e.g. 0xE0 red, 0x1C green, 0x03 blue
+        cv.Optional(CONF_COLOUR, default=0xE0): cv.hex_uint8_t,
+        # the only icons the profile knows
+        cv.Optional(CONF_ASSET_TYPE, default="dog"): cv.enum({"tracker": 0, "dog": 1}),
+        cv.Required(CONF_LATITUDE): cv.use_id(sensor.Sensor),
+        cv.Required(CONF_LONGITUDE): cv.use_id(sensor.Sensor),
+    }
+)
+
+TRANSMITTER_SCHEMA = cv.typed_schema(
+    {
+        # an ANT+ Asset Tracker (like a Garmin Alpha), shown by a watch's dog tracking
+        TYPE_ASSET_TRACKER: cv.Schema(
+            {
+                cv.GenerateID(): cv.declare_id(AntPlusTransmitter),
+                cv.Required(CONF_DEVICE_NUMBER): cv.int_range(1, 0xFFFFF),
+                # the tracker's own position, which distance and bearing are measured from
+                cv.Optional(CONF_LATITUDE): cv.use_id(sensor.Sensor),
+                cv.Optional(CONF_LONGITUDE): cv.use_id(sensor.Sensor),
+                cv.Required(CONF_ASSETS): cv.All(
+                    cv.ensure_list(ASSET_SCHEMA), cv.Length(min=1, max=32)
+                ),
+            }
+        ),
+        # an ANT+ Environment sensor, shown like a Garmin Tempe
+        TYPE_TEMPERATURE: cv.Schema(
+            {
+                cv.GenerateID(): cv.declare_id(AntPlusTransmitter),
+                # this node's ANT ID for it; pick one no real sensor nearby uses
+                cv.Required(CONF_DEVICE_NUMBER): cv.int_range(1, 0xFFFFF),
+                cv.Required(CONF_SENSOR): cv.use_id(sensor.Sensor),
+            }
+        ),
+    },
+    key=CONF_TYPE,
+)
+
+
+def _channel_count(config):
+    channels = len(config[CONF_DEVICES]) + len(config.get(CONF_TRANSMITTERS, []))
+    if CONF_UNKNOWN_DEVICE in config:
+        channels += 1
+    if channels > 32:
+        raise cv.Invalid(f"{channels} ANT channels needed, RadiANT has 32")
+    return config
+
+
 CONFIG_SCHEMA = cv.All(
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(AntPlus),
             # the ANT+ network key, from thisisant.com (ANT+ Adopter)
             cv.Required(CONF_NETWORK_KEY): network_key,
-            cv.Required(CONF_DEVICES): cv.All(
-                cv.ensure_list(DEVICE_SCHEMA), cv.Length(min=1, max=31)
+            cv.Optional(CONF_DEVICES, default=[]): cv.ensure_list(DEVICE_SCHEMA),
+            # this node as ANT+ sensors, for watches and bike computers
+            cv.Optional(CONF_TRANSMITTERS, default=[]): cv.ensure_list(
+                TRANSMITTER_SCHEMA
             ),
             # any configured device is being received
             cv.Optional(CONF_CONNECTED): binary_sensor.binary_sensor_schema(
@@ -249,6 +313,7 @@ CONFIG_SCHEMA = cv.All(
             ),
         }
     ).extend(cv.COMPONENT_SCHEMA),
+    _channel_count,
     cv.only_on([PLATFORM_ZEPHYR]),
 )
 
@@ -331,3 +396,30 @@ async def to_code(config):
             if sensor_config := device_config.get(key):
                 s = await binary_sensor.new_binary_sensor(sensor_config)
                 cg.add(getattr(device, f"set_{key}_binary_sensor")(s))
+
+    for tx_config in config[CONF_TRANSMITTERS]:
+        tx = cg.new_Pvariable(
+            tx_config[CONF_ID],
+            DEVICE_TYPES[tx_config[CONF_TYPE]],
+            tx_config[CONF_DEVICE_NUMBER],
+        )
+        cg.add(var.add_transmitter(tx))
+        if CONF_SENSOR in tx_config:
+            cg.add(tx.set_source(await cg.get_variable(tx_config[CONF_SENSOR])))
+        if CONF_LATITUDE in tx_config and CONF_LONGITUDE in tx_config:
+            cg.add(
+                tx.set_position(
+                    await cg.get_variable(tx_config[CONF_LATITUDE]),
+                    await cg.get_variable(tx_config[CONF_LONGITUDE]),
+                )
+            )
+        for asset in tx_config.get(CONF_ASSETS, []):
+            cg.add(
+                tx.add_asset(
+                    asset[CONF_NAME],
+                    asset[CONF_COLOUR],
+                    asset[CONF_ASSET_TYPE],
+                    await cg.get_variable(asset[CONF_LATITUDE]),
+                    await cg.get_variable(asset[CONF_LONGITUDE]),
+                )
+            )

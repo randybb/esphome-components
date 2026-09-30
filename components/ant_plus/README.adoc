@@ -56,7 +56,8 @@ ant_plus:
 |===
 |Option |Default |Description
 |`network_key` |required |ANT+ network key, 8 bytes as 16 hex digits
-|`devices` |required |The ANT+ devices, see below
+|`devices` | |The ANT+ devices to receive, see below
+|`transmitters` | |This node as ANT+ sensors for watches and bike computers, see below
 |`connected` | |Binary sensor: any configured device is being received
 |`unknown_device` | |Binary sensor: an ANT+ device that isn't configured is in range. Its ANT ID and type are logged, which is how to find a new device's ID. Takes one more channel (a background scan).
 |===
@@ -80,6 +81,40 @@ low or critical). Sensors go `unknown` 10 s after the device's last page.
 |`shifting` |Shifting (34) |`battery_low` only, over every component's battery (their statuses are logged)
 |===
 
+=== Transmitters
+
+The other direction: ESPHome values shown on Garmin watches and bike computers,
+which pair the node like a real sensor. Each transmitter takes `type`,
+`device_number` (its ANT ID; pick one no real sensor nearby uses) and:
+
+[cols="1,2,3",options="header"]
+|===
+|`type` |ANT+ profile |Options
+|`temperature` |Environment (25), 0.5 Hz like a Garmin Tempe |`sensor`: the value; the 24 h low/high are kept from it (rolling, hourly)
+|`asset_tracker` |Asset Tracker (41), shown by a watch's dog tracking |`latitude`/`longitude`: the tracker's own position (sensors), which each asset's distance and bearing are measured from; `assets`: `name` (10 characters), `latitude`/`longitude` sensors, `colour` (3-3-2 RGB) and `asset_type` (`dog` or `tracker`)
+|===
+
+[source,yaml]
+----
+ant_plus:
+  network_key: !secret ant_plus_network_key
+  transmitters:
+    - type: temperature
+      device_number: 51234
+      sensor: outdoor_temperature
+    - type: asset_tracker
+      device_number: 51235
+      latitude: home_latitude
+      longitude: home_longitude
+      assets:
+        - name: Blesk
+          latitude: strike_latitude
+          longitude: strike_longitude
+----
+
+A Garmin Forerunner 970 pairs both; it shows an asset's name and the distance
+sent on page 1 (not one it works out itself), and ignores colour and asset type.
+
 == Notes
 
 * nRF52840 only. RadiANT's radio backend uses the RXREADY event and Long Range
@@ -91,10 +126,10 @@ fixed stack that ESPHome's log output overflows.
 
 == Two chips: ANT+ and Thread
 
-The ANT+ radio runs on its own chip. To get the values into Home Assistant over
-Thread, send them from there with
-https://esphome.io/components/packet_transport/[`packet_transport`] over UART to
-a second ESPHome device on Thread. One direction is enough.
+The ANT+ radio runs on its own chip. `packet_transport` over UART carries the
+values to a second ESPHome device on Thread, and Home Assistant data for the
+transmitters back. On the nRF52840 DK the default UART1 pins are RX P1.01 and
+TX P1.02: use them on both boards and cross the wires (plus GND).
 
 [source,yaml]
 ----
@@ -102,16 +137,16 @@ a second ESPHome device on Thread. One direction is enough.
 uart:
   id: link
   port: UART1
-  tx_pin: P1.01
-  # set it even though it's unused: the zephyr fork otherwise keeps the board's
-  # default RX pin, which on the nRF52840 DK is P1.01 as well
-  rx_pin: P1.02
+  tx_pin: P1.02
+  rx_pin: P1.01
   baud_rate: 115200
 
 packet_transport:
   - platform: uart
     uart_id: link
     update_interval: 1s
+    providers:
+      - name: mcu-nrf-dk  # values for the transmitters come from there
     sensors:
       - hrm_pro_heart_rate  # ids of the ant_plus sensors
     binary_sensors:
@@ -124,6 +159,7 @@ packet_transport:
 uart:
   id: ant_link
   port: UART1
+  tx_pin: P1.02
   rx_pin: P1.01
   baud_rate: 115200
 
@@ -132,6 +168,8 @@ packet_transport:
     uart_id: ant_link
     providers:
       - name: mcu-nrf-ant  # the ANT+ node's esphome: name
+    sensors:
+      - home_latitude  # e.g. homeassistant sensors of zone.home
 
 sensor:
   - platform: packet_transport
@@ -141,26 +179,61 @@ sensor:
     internal: false
 ----
 
-== TODO
+== Roadmap
 
-* *Garmin Edge Remote* (ANT+ Controls, device type 16) as buttons with click and
-long click for every button. The remote is a slave that sends page 73 generic
-commands to a controllable-device master, so the component has to transmit: a
-master channel announcing itself (page 2), receiving the commands. Which
-command numbers the remote sends for short and long presses (Garmin custom
-commands 0x8000+?) has to be sniffed first.
-* *Garmin VIRB XE* camera (ANT+ Controls, the camera is the controllable master):
-the reverse of the Edge Remote, ESPHome as the remote. Start/stop recording and
-take a photo from Home Assistant (page 16 audio/video commands, e.g. `RECORD`,
-or page 73), and read what the camera broadcasts (recording state, battery?).
-* `stride` type: ANT+ Stride Based Speed and Distance (SDM, device type 124), from
-a Garmin Foot Pod or the HRM-Pro's own stride channel. Speed/pace, cadence
-(steps/min), distance and stride count (with rollover), battery. RadiANT has a
-decoder (`profile_sdm`).
-* `heart_rate`: RR intervals and HRV (e.g. RMSSD) from the beat event time and
-count every HRM page carries.
-* Not possible: Garmin running dynamics (vertical oscillation, ground contact
-time...) and the HRM-Pro/Tri stored data go over proprietary Garmin channels,
-not ANT+.
-* Verify the untested types on real devices: `power`, `speed`,
-`fitness_equipment`, `shifting`.
+Goal: every common ANT+ profile, receiving and where it makes sense also
+controlling, so the component is useful beyond one setup. "RadiANT" means it
+ships a decoder/encoder to build on; otherwise the pages are decoded here.
+
+[cols="2,1,1,4",options="header"]
+|===
+|Profile (device type) |Status |RadiANT |Planned
+|Heart Rate (120) |done |yes |RR intervals and HRV (RMSSD) from the beat time/count on every page
+|Running Dynamics (30) | |yes |HR-RD straps (HRM-Pro, HRM-Tri): a second channel on the RF index the strap names in HRM page 4 (or asks for with page 74): cadence, vertical oscillation, ground contact time/balance, stance time, step length, vertical ratio
+|Stride SDM (124) | |yes |Foot pod and the HRM-Pro stride channel: speed/pace, cadence, distance, stride count
+|Bicycle Power (11) |untested |yes |torque pages (0x11, 0x12), pedal balance, torque effectiveness, pedal smoothness
+|Bike Speed (123), Cadence (122), Speed & Cadence (121) |speed untested |no |cadence and combined sensors
+|Fitness Equipment FE-C (17) |rower untested |yes |all FE types (trainer, treadmill, elliptical, climber, nordic skier), elapsed time, trainer page 25; control: ERG target power, simulated grade (`profile_fec_tx`)
+|Environment (25) |done | yes |
+|Bike Radar (40) |battery only |no |threat count, distance and speed of approaching vehicles
+|Bike Lights (35) |battery only |no |light state and mode; control (on/off, mode)
+|Shifting (34) |battery only |no |gear info (front/rear gear, number of gears)
+|Controls (16) | |yes |as controllable master: remotes (Garmin Edge Remote) with click and long click per button, commands have to be sniffed first; as remote: control a controllable device (Garmin VIRB XE camera: record, photo)
+|Light Electric Vehicle (20) | |yes |e-bike speed, battery level, assist level, range; control: assist level, lights
+|Asset Tracker (41) | |yes |dog collars shared by a Garmin Alpha/Astro handheld: name, position, status per dog (for a map in Home Assistant)
+|Blood Pressure, Weight Scale, Muscle Oxygen | |no |when there's a device to test with
+|===
+
+More transmitting ("remote display"), beyond `temperature` and `asset_tracker`:
+
+* more standard sensors, no app needed: heart rate relayed from another strap,
+power or speed from another source; limited to values that fit a profile.
+* lightning with the `asset_tracker`: the latest strike as a "dog", so a watch's
+dog tracking shows its distance and direction. Positions
+from Home Assistant's Blitzortung integration (time-of-arrival network) are
+right from anywhere; a local AS3935 only estimates a coarse distance with no
+direction, and trilaterating several of them needs sensors kilometres apart.
+The Forerunner 970 accepts the asset tracker.
+* as a Weight Scale: turn a dumb scale into a smart one (load cells + `hx711`),
+send the weight to a watch/Edge that saves it to the user profile. The profile
+is two-way (the display sends its user profile, the scale answers with that
+user's measurement). Newer Garmin watches may no longer accept ANT+ scales; an
+old Forerunner 910XT does, and syncs to Garmin Connect over an ANT stick
+(RadiANT's dongle firmware works as one); fallback without ANT: the Garmin Connect integration for Home
+Assistant can add body composition directly.
+* with a Connect IQ data field/widget on a custom ANT channel: shows anything
+(room temperature, power use, fan state) and text messages sent as ANT burst
+("washing machine done", "someone at the gate"), no phone needed; needs a small
+Monkey C app.
+
+Other ideas: a "last seen" timestamp per device (reminder to charge or use),
+logging every unknown device's pages to help adding new profiles.
+
+Not possible over ANT+: the data HRM-Pro/HRM-Tri store without a watch (swim,
+runs) goes over proprietary Garmin channels. Emulating a Garmin inReach to push
+messages to a watch isn't realistic either: its link to watches and Edges is an
+undocumented (likely encrypted) Garmin protocol. Messages go through the
+Connect IQ route above instead.
+
+Still to verify on real devices: `power`, `speed`, `fitness_equipment`,
+`shifting`.

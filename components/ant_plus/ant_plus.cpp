@@ -53,6 +53,8 @@ static const char *type_name(DeviceType type) {
       return "speed";
     case DeviceType::SHIFTING:
       return "shifting";
+    case DeviceType::ASSET_TRACKER:
+      return "asset tracker";
   }
   return "?";
 }
@@ -100,6 +102,8 @@ uint8_t AntPlusDevice::ant_device_type() const {
       return 123;
     case DeviceType::SHIFTING:
       return 34;
+    case DeviceType::ASSET_TRACKER:
+      return 41;
   }
   return 0;
 }
@@ -337,6 +341,194 @@ void AntPlusDevice::set_connected_(bool connected) {
 #endif
 }
 
+uint8_t AntPlusTransmitter::ant_device_type() const {
+  switch (this->type_) {
+    case DeviceType::TEMPERATURE:
+      return 25;
+    case DeviceType::ASSET_TRACKER:
+      return 41;
+    default:
+      return 0;
+  }
+}
+
+uint16_t AntPlusTransmitter::channel_period() const {
+  // Environment: 0.5 Hz like a Garmin Tempe, what watches expect from a temperature
+  // sensor. Tracker: 16 Hz, the profile's only rate.
+  return this->type_ == DeviceType::ASSET_TRACKER ? 2048 : 65535;
+}
+
+uint8_t AntPlusTransmitter::transmission_type() const {
+  // 0x05: independent channel, global data pages; the top 4 bits of a 20-bit ANT ID
+  // go in the upper nibble
+  return 0x05 | ((this->ant_id_ >> 12) & 0xF0);
+}
+
+#ifdef USE_SENSOR
+void AntPlusTransmitter::set_position(sensor::Sensor *latitude, sensor::Sensor *longitude) {
+  latitude->add_on_state_callback([this](float value) { this->latitude_ = value; });
+  longitude->add_on_state_callback([this](float value) { this->longitude_ = value; });
+}
+
+void AntPlusTransmitter::add_asset(const char *name, uint8_t colour, uint8_t asset_type, sensor::Sensor *latitude,
+                                   sensor::Sensor *longitude) {
+  Asset asset{};
+  std::strncpy(asset.name, name, sizeof(asset.name));  // not null terminated at 10 chars
+  asset.colour = colour;
+  asset.asset_type = asset_type;
+  this->assets_.push_back(asset);
+  size_t index = this->assets_.size() - 1;
+  latitude->add_on_state_callback([this, index](float value) { this->assets_[index].latitude = value; });
+  longitude->add_on_state_callback([this, index](float value) { this->assets_[index].longitude = value; });
+}
+
+void AntPlusTransmitter::set_source(sensor::Sensor *source) {
+  source->add_on_state_callback([this](float value) {
+    this->value_ = value;
+    this->event_count_++;
+    if (std::isnan(value))
+      return;
+    uint32_t hour = millis() / 3600000;
+    Hour &bucket = this->hours_[hour % 24];
+    if (bucket.hour != hour)
+      bucket = Hour{hour, value, value};
+    bucket.low = std::min(bucket.low, value);
+    bucket.high = std::max(bucket.high, value);
+  });
+}
+#endif
+
+void AntPlusTransmitter::next_page(uint8_t *page) {
+  uint32_t n = this->message_count_++;
+  if (this->type_ == DeviceType::ASSET_TRACKER) {
+    this->next_tracker_page_(n, page);
+  } else {
+    this->next_environment_page_(n, page);
+  }
+}
+
+void AntPlusTransmitter::next_tracker_page_(uint32_t n, uint8_t *page) {
+  // common pages 80 (manufacturer) and 81 (product) every 65 messages
+  if (n % 65 == 64) {
+    const uint8_t p80[8] = {0x50, 0xFF, 0xFF, 1, 0xFF, 0x00, 1, 0};
+    const uint8_t p81[8] = {0x51, 0xFF, 0xFF, 10, static_cast<uint8_t>(this->ant_id_),
+                            static_cast<uint8_t>(this->ant_id_ >> 8), static_cast<uint8_t>(this->ant_id_ >> 16), 0};
+    std::memcpy(page, n % 130 < 65 ? p80 : p81, 8);
+    return;
+  }
+  if (this->assets_.empty()) {
+    const uint8_t p3[8] = {0x03, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};  // no assets
+    std::memcpy(page, p3, 8);
+    return;
+  }
+  // per 20 messages: 9 location pairs (pages 1 + 2) and one identification pair (16 + 17),
+  // rotating over the assets
+  uint32_t slot = n % 20;
+  uint8_t index = slot < 18 ? (n / 2) % this->assets_.size() : (n / 20) % this->assets_.size();
+  const Asset &asset = this->assets_[index];
+  uint8_t index_byte = 0xE0 | index;  // reserved top 3 bits set
+  if (slot >= 18) {
+    page[0] = slot == 18 ? 0x10 : 0x11;
+    page[1] = index_byte;
+    page[2] = slot == 18 ? asset.colour : asset.asset_type;  // 0 tracker, 1 dog
+    std::memcpy(page + 3, asset.name + (slot == 18 ? 0 : 5), 5);
+    return;
+  }
+  bool has_position = !std::isnan(asset.latitude) && !std::isnan(asset.longitude);
+  // semicircles: degrees * 2^31 / 180
+  int32_t latitude = has_position ? static_cast<int32_t>(llround(asset.latitude * (2147483648.0 / 180.0))) : 0;
+  int32_t longitude = has_position ? static_cast<int32_t>(llround(asset.longitude * (2147483648.0 / 180.0))) : 0;
+  if (slot % 2 == 0) {
+    // page 1: distance (m) and bearing (1/256 turn) from the tracker's own position,
+    // which watches show as they are; status: situation "unknown" (4), GPS lost if no position
+    uint16_t distance = 0;
+    uint8_t bearing = 0;
+    if (has_position && !std::isnan(this->latitude_) && !std::isnan(this->longitude_)) {
+      constexpr double RAD = M_PI / 180.0;
+      double lat1 = this->latitude_ * RAD, lat2 = asset.latitude * RAD;
+      double dlat = lat2 - lat1, dlon = (asset.longitude - this->longitude_) * RAD;
+      double a = sin(dlat / 2) * sin(dlat / 2) + cos(lat1) * cos(lat2) * sin(dlon / 2) * sin(dlon / 2);
+      distance = static_cast<uint16_t>(std::min(65535.0, 2 * 6371000.0 * atan2(sqrt(a), sqrt(1 - a))));
+      double b = atan2(sin(dlon) * cos(lat2), cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dlon));
+      bearing = static_cast<uint8_t>(lround(fmod(b / RAD + 360.0, 360.0) * 256.0 / 360.0) & 0xFF);
+    }
+    uint8_t status = 0x04 | (has_position ? 0 : 0x10);
+    const uint8_t p1[8] = {0x01,
+                           index_byte,
+                           static_cast<uint8_t>(distance),
+                           static_cast<uint8_t>(distance >> 8),
+                           bearing,
+                           status,
+                           static_cast<uint8_t>(latitude),
+                           static_cast<uint8_t>(latitude >> 8)};
+    std::memcpy(page, p1, 8);
+  } else {
+    const uint8_t p2[8] = {0x02,
+                           index_byte,
+                           static_cast<uint8_t>(latitude >> 16),
+                           static_cast<uint8_t>(latitude >> 24),
+                           static_cast<uint8_t>(longitude),
+                           static_cast<uint8_t>(longitude >> 8),
+                           static_cast<uint8_t>(longitude >> 16),
+                           static_cast<uint8_t>(longitude >> 24)};
+    std::memcpy(page, p2, 8);
+  }
+}
+
+void AntPlusTransmitter::next_environment_page_(uint32_t n, uint8_t *page) {
+  // common pages 80 (manufacturer) and 81 (product) at least every 65 messages
+  if (n % 65 == 63 || n % 65 == 64) {
+    if (n % 130 < 65) {
+      // manufacturer 255 = development, hardware revision 1, model 1
+      const uint8_t p80[8] = {0x50, 0xFF, 0xFF, 1, 0xFF, 0x00, 1, 0};
+      std::memcpy(page, p80, 8);
+    } else {
+      // software 1.0, serial number = ANT ID
+      const uint8_t p81[8] = {0x51,
+                              0xFF,
+                              0xFF,
+                              10,
+                              static_cast<uint8_t>(this->ant_id_),
+                              static_cast<uint8_t>(this->ant_id_ >> 8),
+                              static_cast<uint8_t>(this->ant_id_ >> 16),
+                              0};
+      std::memcpy(page, p81, 8);
+    }
+    return;
+  }
+  if (n % 32 == 31) {
+    // Environment page 0: 0.5 Hz, no clocks, pages 0 and 1 supported
+    const uint8_t p0[8] = {0x00, 0xFF, 0xFF, 0x00, 0x03, 0x00, 0x00, 0x00};
+    std::memcpy(page, p0, 8);
+    return;
+  }
+  // Environment page 1: event count, 24 h low/high (signed 12 bit, 0.1 degC, 0x800 =
+  // unknown), current in 0.01 degC
+  float low = NAN, high = NAN;
+  uint32_t now_hour = millis() / 3600000;
+  for (const Hour &bucket : this->hours_) {
+    if (bucket.hour == UINT32_MAX || now_hour - bucket.hour >= 24)
+      continue;
+    low = std::isnan(low) ? bucket.low : std::min(low, bucket.low);
+    high = std::isnan(high) ? bucket.high : std::max(high, bucket.high);
+  }
+  auto to_12bit = [](float value) -> uint16_t {
+    return std::isnan(value) ? 0x800 : static_cast<uint16_t>(lroundf(value * 10)) & 0xFFF;
+  };
+  uint16_t low12 = to_12bit(low), high12 = to_12bit(high);
+  int16_t temperature = std::isnan(this->value_) ? INT16_MIN : static_cast<int16_t>(lroundf(this->value_ * 100));
+  // low = [3] + [4] bits 7:4 on top, high = [4] bits 3:0 at the bottom + [5]
+  const uint8_t p1[8] = {0x01,
+                         0xFF,
+                         this->event_count_,
+                         static_cast<uint8_t>(low12 & 0xFF),
+                         static_cast<uint8_t>(((low12 >> 8) << 4) | (high12 & 0x0F)),
+                         static_cast<uint8_t>(high12 >> 4),
+                         static_cast<uint8_t>(temperature & 0xFF),
+                         static_cast<uint8_t>((temperature >> 8) & 0xFF)};
+  std::memcpy(page, p1, 8);
+}
+
 void AntPlus::setup() {
   global_ant_plus = this;
 
@@ -370,6 +562,25 @@ void AntPlus::setup() {
   if (this->unknown_device_ != nullptr)
     this->discovery_ = this->setup_discovery_channel_(this->devices_.size());
 #endif
+
+  this->first_transmitter_channel_ = this->devices_.size() + (this->discovery_ ? 1 : 0);
+  for (uint8_t i = 0; i < this->transmitters_.size(); i++) {
+    auto *tx = this->transmitters_[i];
+    uint8_t channel = this->first_transmitter_channel_ + i;
+    uint8_t page[8];
+    tx->next_page(page);
+    err = antr_channel_assign(channel, ANTW_CHANNEL_TYPE_MASTER, NETWORK, 0);
+    if (err == 0)
+      err = antr_channel_id_set(channel, tx->get_ant_id() & 0xFFFF, tx->ant_device_type(), tx->transmission_type());
+    if (err == 0)
+      err = antr_channel_period_set(channel, tx->channel_period());
+    if (err == 0)
+      err = antr_channel_radio_freq_set(channel, ANT_PLUS_FREQ);
+    if (err == 0 && this->open_channel_(channel))
+      err = antr_broadcast_message_tx(channel, 8, page);
+    if (err != 0)
+      ESP_LOGW(TAG, "Transmitter channel %u setup failed: 0x%02X", channel, err);
+  }
 }
 
 bool AntPlus::setup_discovery_channel_(uint8_t channel) {
@@ -422,7 +633,15 @@ void AntPlus::loop() {
   while (tail != this->head_.load(std::memory_order_acquire)) {
     const Message &msg = this->queue_[tail % QUEUE_SIZE];
     bool discovery = this->discovery_ && msg.channel == this->devices_.size();
-    if (msg.channel < this->devices_.size() || discovery) {
+    if (msg.channel >= this->first_transmitter_channel_ &&
+        msg.channel < this->first_transmitter_channel_ + this->transmitters_.size()) {
+      // the slot fired: queue the next page
+      if (msg.id == ANTW_MESG_RESPONSE_EVENT_ID && msg.data[0] == ANTW_EVENT_TX) {
+        uint8_t page[8];
+        this->transmitters_[msg.channel - this->first_transmitter_channel_]->next_page(page);
+        antr_broadcast_message_tx(msg.channel, 8, page);
+      }
+    } else if (msg.channel < this->devices_.size() || discovery) {
       if (msg.id == ANTW_MESG_RESPONSE_EVENT_ID) {
         // search timed out and closed the channel: keep looking
         if (msg.data[0] == ANTW_EVENT_CHANNEL_CLOSED)
@@ -458,6 +677,8 @@ void AntPlus::dump_config() {
   for (auto *device : this->devices_)
     ESP_LOGCONFIG(TAG, "  %s, ANT ID %" PRIu32 "%s", type_name(device->get_type()), device->get_ant_id(),
                   device->get_ant_id() == 0 ? " (any)" : "");
+  for (auto *tx : this->transmitters_)
+    ESP_LOGCONFIG(TAG, "  Transmitting %s as ANT ID %" PRIu32, type_name(tx->get_type()), tx->get_ant_id());
 }
 
 void AntPlus::on_message(uint8_t id, const uint8_t *data, uint8_t len) {
@@ -469,7 +690,7 @@ void AntPlus::on_message(uint8_t id, const uint8_t *data, uint8_t len) {
     if (len >= 14 && (data[9] & 0x80))
       std::memcpy(msg.device_id, data + 10, 4);
   } else if (id == ANTW_MESG_RESPONSE_EVENT_ID && len >= 3 && data[1] == ANTW_MESG_EVENT_ID &&
-             data[2] == ANTW_EVENT_CHANNEL_CLOSED) {
+             (data[2] == ANTW_EVENT_CHANNEL_CLOSED || data[2] == ANTW_EVENT_TX)) {
     msg.id = id;
     msg.data[0] = data[2];
   } else {

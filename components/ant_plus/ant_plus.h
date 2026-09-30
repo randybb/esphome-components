@@ -12,11 +12,21 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cmath>
 #include <vector>
 
 namespace esphome::ant_plus {
 
-enum class DeviceType : uint8_t { HEART_RATE, FITNESS_EQUIPMENT, TEMPERATURE, BIKE_RADAR, POWER, SPEED, SHIFTING };
+enum class DeviceType : uint8_t {
+  HEART_RATE,
+  FITNESS_EQUIPMENT,
+  TEMPERATURE,
+  BIKE_RADAR,
+  POWER,
+  SPEED,
+  SHIFTING,
+  ASSET_TRACKER,
+};
 
 /// One ANT+ sensor on its own channel. Pages are decoded in the main loop.
 class AntPlusDevice {
@@ -97,6 +107,58 @@ class AntPlusDevice {
 #endif
 };
 
+/// This node as an ANT+ sensor (master channel), so watches and bike computers show a
+/// value from ESPHome. Pages are built on every EVENT_TX in the main loop.
+class AntPlusTransmitter {
+ public:
+  AntPlusTransmitter(DeviceType type, uint32_t ant_id) : type_(type), ant_id_(ant_id) {}
+
+  DeviceType get_type() const { return this->type_; }
+  uint32_t get_ant_id() const { return this->ant_id_; }
+  uint8_t ant_device_type() const;
+  uint8_t transmission_type() const;
+  uint16_t channel_period() const;
+#ifdef USE_SENSOR
+  void set_source(sensor::Sensor *source);
+  /// asset_tracker: one tracked asset ("dog") with a name, 3-3-2 RGB colour and position
+  void add_asset(const char *name, uint8_t colour, uint8_t asset_type, sensor::Sensor *latitude,
+                 sensor::Sensor *longitude);
+  /// asset_tracker: the tracker's own position (the "handheld"), which distance and bearing
+  /// on page 1 are measured from
+  void set_position(sensor::Sensor *latitude, sensor::Sensor *longitude);
+#endif
+
+  void next_page(uint8_t *page);
+
+ protected:
+  void next_environment_page_(uint32_t n, uint8_t *page);
+  void next_tracker_page_(uint32_t n, uint8_t *page);
+
+  struct Asset {
+    char name[10];
+    uint8_t colour;
+    uint8_t asset_type;
+    float latitude{NAN};
+    float longitude{NAN};
+  };
+  std::vector<Asset> assets_;
+  float latitude_{NAN};
+  float longitude_{NAN};
+
+  DeviceType type_;
+  uint32_t ant_id_;
+  float value_{NAN};
+  uint8_t event_count_{0};
+  uint32_t message_count_{0};
+  // 24 h low/high as 24 hourly buckets (NAN = no value that hour)
+  struct Hour {
+    uint32_t hour{UINT32_MAX};
+    float low{NAN};
+    float high{NAN};
+  };
+  std::array<Hour, 24> hours_{};
+};
+
 /// ANT+ receiver on the chip's own radio, using RadiANT (clean-room ANT+ compatible
 /// link layer) through its antr_* API. One slave channel per configured device.
 class AntPlus : public Component {
@@ -108,6 +170,7 @@ class AntPlus : public Component {
 
   void set_network_key(const std::vector<uint8_t> &key) { std::copy_n(key.begin(), 8, this->network_key_.begin()); }
   void add_device(AntPlusDevice *device) { this->devices_.push_back(device); }
+  void add_transmitter(AntPlusTransmitter *transmitter) { this->transmitters_.push_back(transmitter); }
 #ifdef USE_BINARY_SENSOR
   void set_connected_binary_sensor(binary_sensor::BinarySensor *s) { this->connected_ = s; }
   void set_unknown_device_binary_sensor(binary_sensor::BinarySensor *s) { this->unknown_device_ = s; }
@@ -141,6 +204,8 @@ class AntPlus : public Component {
 
   std::array<uint8_t, 8> network_key_{};
   std::vector<AntPlusDevice *> devices_;
+  std::vector<AntPlusTransmitter *> transmitters_;
+  uint8_t first_transmitter_channel_{0};
 
   // single producer (RadiANT thread), single consumer (loop)
   std::array<Message, QUEUE_SIZE> queue_{};
