@@ -14,4 +14,5 @@ external_components:
 
 | Component | Description |
 |---|---|
+| [ant_plus](components/ant_plus/) | ANT+ heart rate monitor over UART from an nRF52 running [nrf-ant-bridge](https://github.com/randybb/nrf-ant-bridge) |
 | [audio_spectrum](components/audio_spectrum/) | Pass-through speaker that computes a spectrum of the audio for a Winamp style analyzer display |
