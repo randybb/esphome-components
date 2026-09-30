@@ -149,5 +149,9 @@ commands to a controllable-device master, so the component has to transmit: a
 master channel announcing itself (page 2), receiving the commands. Which
 command numbers the remote sends for short and long presses (Garmin custom
 commands 0x8000+?) has to be sniffed first.
+* *Garmin VIRB XE* camera (ANT+ Controls, the camera is the controllable master):
+the reverse of the Edge Remote, ESPHome as the remote. Start/stop recording and
+take a photo from Home Assistant (page 16 audio/video commands, e.g. `RECORD`,
+or page 73), and read what the camera broadcasts (recording state, battery?).
 * Verify the untested types on real devices: `power`, `speed`,
 `fitness_equipment`, `shifting`.
