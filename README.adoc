@@ -1,0 +1,21 @@
+= esphome-components
+
+Custom ESPHome components, referenced from device configs via
+https://esphome.io/components/external_components.html[`external_components`]
+(`source: github://randybb/esphome-components`) — no fork of ESPHome itself.
+
+[source,yaml]
+----
+external_components:
+  - source: github://randybb/esphome-components
+    components: [audio_spectrum]
+----
+
+== Components
+
+[cols="1,3",options="header"]
+|===
+|Component |Description
+|link:components/ant_plus/[ant_plus] |ANT+ heart rate monitor over UART from an nRF52 running https://github.com/randybb/nrf-ant-bridge[nrf-ant-bridge]
+|link:components/audio_spectrum/[audio_spectrum] |Pass-through speaker that computes a spectrum of the audio for a Winamp style analyzer display
+|===
