@@ -1,26 +1,30 @@
 = ant_plus
 
-ANT+ heart rate monitor for any ESPHome device, e.g. an nRF52840 on Thread or an
-ESP32. It reads the ANT+ data from a second chip, an nRF52 running the
-https://github.com/randybb/nrf-ant-bridge[nrf-ant-bridge] firmware, over UART.
+ANT+ heart rate monitor received on the chip's own radio, for nRF52840 on the
+https://github.com/esphomeplatformzephyr/esphome[esphomeplatformzephyr] fork
+(`zephyr:` platform, `framework: type: ncs`).
 
-The ANT stack runs on the bridge because it only works on nRF Connect SDK 2.9
-(sdk-ant v2.0.0). On NCS 3.4, which ESPHome's nRF52 support needs, the channel
-opens but never receives anything.
+The ANT link layer is https://github.com/winedarksea/RadiANT[RadiANT], a
+clean-room ANT+ compatible implementation (Apache-2.0), fetched at build time.
+It needs no Garmin stack or license, but it also doesn't carry the ANT+ network
+key: get it as an ANT+ Adopter at https://www.thisisant.com.
 
 == Configuration
 
 [source,yaml]
 ----
+zephyr:
+  variant: NRF52
+  board: nrf52840dk/nrf52840
+  framework:
+    type: ncs
+
 external_components:
   - source: github://randybb/esphome-components
     components: [ant_plus]
 
-uart:
-  rx_pin: GPIO16  # bridge TX
-  baud_rate: 115200
-
 ant_plus:
+  network_key: !secret ant_plus_network_key
   device_number: 655730
   heart_rate:
     name: Heart Rate
@@ -29,9 +33,63 @@ ant_plus:
 [cols="1,1,3",options="header"]
 |===
 |Option |Default |Description
-|`device_number` |`0` |ANT ID of the heart rate monitor, as shown by Garmin devices; `0` takes whichever monitor the bridge pairs with
-|`heart_rate` | |Heart rate sensor. Goes `unknown` 5 s after the last page
+|`network_key` |required |ANT+ network key, 8 bytes as 16 hex digits
+|`device_number` |`0` |ANT ID of the heart rate monitor, as shown by Garmin devices; `0` takes the first one found
+|`heart_rate` | |Heart rate sensor, 3-4 updates a second. Goes `unknown` 5 s after the last page
 |===
 
-The bridge sends 3-4 updates a second. Add `filters:` (e.g. `throttle` or
-`delta`) to the sensor to send fewer to Home Assistant.
+== Notes
+
+* nRF52840 only. RadiANT's radio backend uses the RXREADY event and Long Range
+registers the nRF52832 doesn't have.
+* The radio backend owns TIMER4 (set up by the component through a devicetree
+overlay).
+* Leave Zephyr logging (`CONFIG_LOG`) off: RadiANT's event thread has a small
+fixed stack that ESPHome's log output overflows.
+
+== Two chips: ANT+ and Thread
+
+The ANT+ radio runs on its own chip. To get the values into Home Assistant over
+Thread, send them from there with
+https://esphome.io/components/packet_transport/[`packet_transport`] over UART to
+a second ESPHome device on Thread:
+
+[source,yaml]
+----
+# ANT+ node
+uart:
+  id: link
+  port: UART1
+  tx_pin: P1.01
+  baud_rate: 115200
+
+packet_transport:
+  - platform: uart
+    uart_id: link
+    update_interval: 1s
+    sensors:
+      - heart_rate  # id of the ant_plus heart_rate sensor
+----
+
+[source,yaml]
+----
+# Thread node
+uart:
+  id: ant_link
+  port: UART1
+  rx_pin: P1.01
+  baud_rate: 115200
+
+packet_transport:
+  - platform: uart
+    uart_id: ant_link
+    providers:
+      - name: mcu-nrf-ant  # the ANT+ node's esphome: name
+
+sensor:
+  - platform: packet_transport
+    provider: mcu-nrf-ant
+    remote_id: heart_rate
+    name: Heart Rate
+    internal: false
+----

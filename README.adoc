@@ -16,6 +16,6 @@ external_components:
 [cols="1,3",options="header"]
 |===
 |Component |Description
-|link:components/ant_plus/[ant_plus] |ANT+ heart rate monitor over UART from an nRF52 running https://github.com/randybb/nrf-ant-bridge[nrf-ant-bridge]
+|link:components/ant_plus/[ant_plus] |ANT+ heart rate monitor on the chip's own radio (nRF52840, zephyr fork, RadiANT)
 |link:components/audio_spectrum/[audio_spectrum] |Pass-through speaker that computes a spectrum of the audio for a Winamp style analyzer display
 |===
