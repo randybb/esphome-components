@@ -1,6 +1,6 @@
 = ant_plus
 
-ANT+ heart rate monitor received on the chip's own radio, for nRF52840 on the
+ANT+ sensors received on the chip's own radio, for nRF52840 on the
 https://github.com/esphomeplatformzephyr/esphome[esphomeplatformzephyr] fork
 (`zephyr:` platform, `framework: type: ncs`).
 
@@ -8,6 +8,8 @@ The ANT link layer is https://github.com/winedarksea/RadiANT[RadiANT], a
 clean-room ANT+ compatible implementation (Apache-2.0), fetched at build time.
 It needs no Garmin stack or license, but it also doesn't carry the ANT+ network
 key: get it as an ANT+ Adopter at https://www.thisisant.com.
+
+Each configured device gets its own ANT channel (up to 31).
 
 == Configuration
 
@@ -25,17 +27,57 @@ external_components:
 
 ant_plus:
   network_key: !secret ant_plus_network_key
-  device_number: 655730
-  heart_rate:
-    name: Heart Rate
+  connected:
+    name: ANT+ Connected
+  unknown_device:
+    name: ANT+ Unknown Device
+  devices:
+    - type: heart_rate
+      device_number: 655730
+      heart_rate:
+        name: Garmin HRM-Pro Heart Rate
+      battery_level:
+        name: Garmin HRM-Pro Battery
+    - type: power
+      device_number: 886796
+      power:
+        name: Garmin Rally RS200 Power
+      cadence:
+        name: Garmin Rally RS200 Cadence
+    - type: temperature
+      device_number: 1044953
+      temperature:
+        name: Garmin Tempe Temperature
 ----
+
+=== Hub
 
 [cols="1,1,3",options="header"]
 |===
 |Option |Default |Description
 |`network_key` |required |ANT+ network key, 8 bytes as 16 hex digits
-|`device_number` |`0` |ANT ID of the heart rate monitor, as shown by Garmin devices; `0` takes the first one found
-|`heart_rate` | |Heart rate sensor, 3-4 updates a second. Goes `unknown` 5 s after the last page
+|`devices` |required |The ANT+ devices, see below
+|`connected` | |Binary sensor: any configured device is being received
+|`unknown_device` | |Binary sensor: an ANT+ device that isn't configured is in range. Its ANT ID and type are logged, which is how to find a new device's ID. Takes one more channel (a background scan).
+|===
+
+=== Devices
+
+Every device takes `type`, `device_number` (the ANT ID Garmin devices show; `0`
+pairs with the first one found and logs its ID) and these optional sensors:
+`connected` (binary), `battery_voltage`, `battery_low` (binary, battery status
+low or critical). Sensors go `unknown` 10 s after the device's last page.
+
+[cols="1,2,3",options="header"]
+|===
+|`type` |ANT+ profile |Sensors
+|`heart_rate` |Heart Rate (120) |`heart_rate`, `battery_level`
+|`power` |Bicycle Power (11) |`power`, `cadence` (rpm)
+|`speed` |Bike Speed (123) |`speed`, `distance` (since boot); option `wheel_circumference` (default 2105 mm)
+|`fitness_equipment` |FE-C (17) |`power`, `cadence` (strokes/min on a rower), `speed`, `distance`, `heart_rate`, `in_use` (binary, FE state IN_USE)
+|`temperature` |Environment (25), 0.5 Hz like the Garmin Tempe |`temperature`, `temperature_min`, `temperature_max` (the sensor's 24 h low/high)
+|`bike_radar` |Bike Radar (40) |battery only
+|`shifting` |Shifting (34) |`battery_low` only, over every component's battery (their statuses are logged)
 |===
 
 == Notes
@@ -52,7 +94,7 @@ fixed stack that ESPHome's log output overflows.
 The ANT+ radio runs on its own chip. To get the values into Home Assistant over
 Thread, send them from there with
 https://esphome.io/components/packet_transport/[`packet_transport`] over UART to
-a second ESPHome device on Thread:
+a second ESPHome device on Thread. One direction is enough.
 
 [source,yaml]
 ----
@@ -61,6 +103,9 @@ uart:
   id: link
   port: UART1
   tx_pin: P1.01
+  # set it even though it's unused: the zephyr fork otherwise keeps the board's
+  # default RX pin, which on the nRF52840 DK is P1.01 as well
+  rx_pin: P1.02
   baud_rate: 115200
 
 packet_transport:
@@ -68,7 +113,9 @@ packet_transport:
     uart_id: link
     update_interval: 1s
     sensors:
-      - heart_rate  # id of the ant_plus heart_rate sensor
+      - hrm_pro_heart_rate  # ids of the ant_plus sensors
+    binary_sensors:
+      - ant_connected
 ----
 
 [source,yaml]
@@ -89,7 +136,7 @@ packet_transport:
 sensor:
   - platform: packet_transport
     provider: mcu-nrf-ant
-    remote_id: heart_rate
-    name: Heart Rate
+    remote_id: hrm_pro_heart_rate
+    name: Garmin HRM-Pro Heart Rate
     internal: false
 ----
