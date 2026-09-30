@@ -16,7 +16,7 @@
 
 namespace esphome::ant_plus {
 
-enum class DeviceType : uint8_t { HEART_RATE, FITNESS_EQUIPMENT, TEMPERATURE, BIKE_RADAR };
+enum class DeviceType : uint8_t { HEART_RATE, FITNESS_EQUIPMENT, TEMPERATURE, BIKE_RADAR, POWER, SPEED, SHIFTING };
 
 /// One ANT+ sensor on its own channel. Pages are decoded in the main loop.
 class AntPlusDevice {
@@ -31,6 +31,7 @@ class AntPlusDevice {
   void on_page(const uint8_t *page, uint32_t now);
   void check_stale(uint32_t now);
   bool is_connected() const { return this->connected_state_; }
+  void set_wheel_circumference(float meters) { this->wheel_circumference_ = meters; }
 
 #ifdef USE_SENSOR
   void set_heart_rate_sensor(sensor::Sensor *s) { this->heart_rate_ = s; }
@@ -54,6 +55,9 @@ class AntPlusDevice {
   void decode_heart_rate_(const uint8_t *page);
   void decode_fitness_equipment_(const uint8_t *page);
   void decode_temperature_(const uint8_t *page);
+  void decode_power_(const uint8_t *page);
+  void decode_speed_(const uint8_t *page, uint32_t now);
+  void decode_shifting_battery_(const uint8_t *page);
   void decode_battery_(uint8_t fractional, uint8_t coarse);
   void set_connected_(bool connected);
 
@@ -64,6 +68,15 @@ class AntPlusDevice {
   // FE rollover counters (distance in m, one byte on air)
   int last_distance_{-1};
   uint32_t total_distance_{0};
+  // speed sensor: last event time (1/1024 s) and revolution count
+  int32_t last_event_time_{-1};
+  uint16_t last_revolutions_{0};
+  uint32_t last_revolution_ms_{0};
+  bool stopped_{true};
+  float wheel_circumference_{2.105f};
+  float total_speed_distance_{0};
+  // shifting: battery status per page 82 battery identifier (0 = not seen)
+  std::array<uint8_t, 16> battery_status_{};
 
 #ifdef USE_SENSOR
   sensor::Sensor *heart_rate_{nullptr};
@@ -108,17 +121,19 @@ class AntPlus : public Component {
     uint8_t id;
     uint8_t channel;
     uint8_t data[8];
+    uint8_t device_id[4];  // extended data: device number LSB/MSB, device type, transmission type
   };
   static constexpr uint8_t QUEUE_SIZE = 32;
 
   bool open_channel_(uint8_t channel);
   bool setup_discovery_channel_(uint8_t channel);
-  void on_discovery_page_(uint32_t now);
+  void on_discovery_message_(const Message &msg, uint32_t now);
 
-  // extra wildcard channel with the known devices excluded, when unknown_device is set
+  // extra background scan channel that hears every ANT+ device, when unknown_device is set
   bool discovery_{false};
   bool unknown_state_{false};
   uint32_t last_unknown_ms_{0};
+  std::vector<uint32_t> unknown_ids_;  // logged once each
 #ifdef USE_BINARY_SENSOR
   binary_sensor::BinarySensor *connected_{nullptr};
   binary_sensor::BinarySensor *unknown_device_{nullptr};

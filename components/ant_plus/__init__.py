@@ -52,6 +52,7 @@ CONF_DEVICES = "devices"
 CONF_HEART_RATE = "heart_rate"
 CONF_IN_USE = "in_use"
 CONF_BATTERY_LOW = "battery_low"
+CONF_WHEEL_CIRCUMFERENCE = "wheel_circumference"
 CONF_NETWORK_KEY = "network_key"
 CONF_TEMPERATURE_MAX = "temperature_max"
 CONF_UNKNOWN_DEVICE = "unknown_device"
@@ -70,11 +71,17 @@ TYPE_HEART_RATE = "heart_rate"
 TYPE_FITNESS_EQUIPMENT = "fitness_equipment"
 TYPE_TEMPERATURE = "temperature"
 TYPE_BIKE_RADAR = "bike_radar"
+TYPE_POWER = "power"
+TYPE_SPEED = "speed"
+TYPE_SHIFTING = "shifting"
 DEVICE_TYPES = {
     TYPE_HEART_RATE: DeviceType.HEART_RATE,
     TYPE_FITNESS_EQUIPMENT: DeviceType.FITNESS_EQUIPMENT,
     TYPE_TEMPERATURE: DeviceType.TEMPERATURE,
     TYPE_BIKE_RADAR: DeviceType.BIKE_RADAR,
+    TYPE_POWER: DeviceType.POWER,
+    TYPE_SPEED: DeviceType.SPEED,
+    TYPE_SHIFTING: DeviceType.SHIFTING,
 }
 
 
@@ -108,6 +115,25 @@ TEMPERATURE_SCHEMA = sensor.sensor_schema(
     accuracy_decimals=1,
     device_class=DEVICE_CLASS_TEMPERATURE,
     state_class=STATE_CLASS_MEASUREMENT,
+)
+
+POWER_SCHEMA = sensor.sensor_schema(
+    unit_of_measurement=UNIT_WATT,
+    accuracy_decimals=0,
+    device_class=DEVICE_CLASS_POWER,
+    state_class=STATE_CLASS_MEASUREMENT,
+)
+SPEED_SCHEMA = sensor.sensor_schema(
+    unit_of_measurement=UNIT_METER_PER_SECOND,
+    accuracy_decimals=2,
+    device_class=DEVICE_CLASS_SPEED,
+    state_class=STATE_CLASS_MEASUREMENT,
+)
+DISTANCE_SCHEMA = sensor.sensor_schema(
+    unit_of_measurement=UNIT_METER,
+    accuracy_decimals=0,
+    device_class=DEVICE_CLASS_DISTANCE,
+    state_class=STATE_CLASS_TOTAL_INCREASING,
 )
 
 DEVICE_BASE_SCHEMA = cv.Schema(
@@ -145,12 +171,7 @@ DEVICE_SCHEMA = cv.typed_schema(
         ),
         TYPE_FITNESS_EQUIPMENT: DEVICE_BASE_SCHEMA.extend(
             {
-                cv.Optional(CONF_POWER): sensor.sensor_schema(
-                    unit_of_measurement=UNIT_WATT,
-                    accuracy_decimals=0,
-                    device_class=DEVICE_CLASS_POWER,
-                    state_class=STATE_CLASS_MEASUREMENT,
-                ),
+                cv.Optional(CONF_POWER): POWER_SCHEMA,
                 # strokes/min on a rower
                 cv.Optional(CONF_CADENCE): sensor.sensor_schema(
                     unit_of_measurement="spm",
@@ -158,19 +179,9 @@ DEVICE_SCHEMA = cv.typed_schema(
                     accuracy_decimals=0,
                     state_class=STATE_CLASS_MEASUREMENT,
                 ),
-                cv.Optional(CONF_SPEED): sensor.sensor_schema(
-                    unit_of_measurement=UNIT_METER_PER_SECOND,
-                    accuracy_decimals=2,
-                    device_class=DEVICE_CLASS_SPEED,
-                    state_class=STATE_CLASS_MEASUREMENT,
-                ),
+                cv.Optional(CONF_SPEED): SPEED_SCHEMA,
                 # accumulated since boot
-                cv.Optional(CONF_DISTANCE): sensor.sensor_schema(
-                    unit_of_measurement=UNIT_METER,
-                    accuracy_decimals=0,
-                    device_class=DEVICE_CLASS_DISTANCE,
-                    state_class=STATE_CLASS_TOTAL_INCREASING,
-                ),
+                cv.Optional(CONF_DISTANCE): DISTANCE_SCHEMA,
                 cv.Optional(CONF_HEART_RATE): HEART_RATE_SCHEMA,
                 # FE state IN_USE
                 cv.Optional(CONF_IN_USE): binary_sensor.binary_sensor_schema(
@@ -186,8 +197,34 @@ DEVICE_SCHEMA = cv.typed_schema(
                 cv.Optional(CONF_TEMPERATURE_MAX): TEMPERATURE_SCHEMA,
             }
         ),
+        TYPE_POWER: DEVICE_BASE_SCHEMA.extend(
+            {
+                cv.Optional(CONF_POWER): POWER_SCHEMA,
+                cv.Optional(CONF_CADENCE): sensor.sensor_schema(
+                    unit_of_measurement="rpm",
+                    icon="mdi:rotate-right",
+                    accuracy_decimals=0,
+                    state_class=STATE_CLASS_MEASUREMENT,
+                ),
+            }
+        ),
+        TYPE_SPEED: DEVICE_BASE_SCHEMA.extend(
+            {
+                cv.Optional(CONF_WHEEL_CIRCUMFERENCE, default="2105mm"): cv.All(
+                    cv.distance, cv.Range(min=0.5, max=4.0)
+                ),
+                cv.Optional(CONF_SPEED): SPEED_SCHEMA,
+                # accumulated since boot
+                cv.Optional(CONF_DISTANCE): DISTANCE_SCHEMA,
+            }
+        ),
         # Garmin Varia and the like: only the battery is read
         TYPE_BIKE_RADAR: DEVICE_BASE_SCHEMA,
+        # electronic shifting (SRAM AXS, Shimano Di2): one battery per component, so
+        # only battery_low (any of them low or critical); statuses are logged
+        TYPE_SHIFTING: DEVICE_BASE_SCHEMA.extend(
+            {cv.Optional(CONF_BATTERY_VOLTAGE): cv.invalid("use battery_low")}
+        ),
     },
     key=CONF_TYPE,
 )
@@ -284,6 +321,8 @@ async def to_code(config):
             device_config[CONF_DEVICE_NUMBER],
         )
         cg.add(var.add_device(device))
+        if CONF_WHEEL_CIRCUMFERENCE in device_config:
+            cg.add(device.set_wheel_circumference(device_config[CONF_WHEEL_CIRCUMFERENCE]))
         for key in SENSORS:
             if sensor_config := device_config.get(key):
                 s = await sensor.new_sensor(sensor_config)

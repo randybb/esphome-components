@@ -21,6 +21,7 @@ static constexpr uint32_t STALE_MS = 10000;
 static constexpr uint8_t NETWORK = 0;
 static constexpr uint8_t ANT_PLUS_FREQ = 57;  // 2457 MHz
 static constexpr uint8_t CHANNEL_TYPE_SLAVE = 0x00;
+static constexpr uint8_t EXT_ASSIGN_BACKGROUND_SCAN = 0x01;
 
 // ANT+ common page 82: battery status
 static constexpr uint8_t PAGE_BATTERY_STATUS = 0x52;
@@ -46,6 +47,12 @@ static const char *type_name(DeviceType type) {
       return "temperature";
     case DeviceType::BIKE_RADAR:
       return "bike radar";
+    case DeviceType::POWER:
+      return "power";
+    case DeviceType::SPEED:
+      return "speed";
+    case DeviceType::SHIFTING:
+      return "shifting";
   }
   return "?";
 }
@@ -87,6 +94,12 @@ uint8_t AntPlusDevice::ant_device_type() const {
       return 25;
     case DeviceType::BIKE_RADAR:
       return 40;
+    case DeviceType::POWER:
+      return 11;
+    case DeviceType::SPEED:
+      return 123;
+    case DeviceType::SHIFTING:
+      return 34;
   }
   return 0;
 }
@@ -102,7 +115,12 @@ uint16_t AntPlusDevice::channel_period() const {
       // Garmin's Tempe runs at 0.5 Hz
       return 65535;
     case DeviceType::BIKE_RADAR:
+    case DeviceType::SHIFTING:
       return 8192;  // 4 Hz
+    case DeviceType::POWER:
+      return 8182;  // 4.005 Hz
+    case DeviceType::SPEED:
+      return 8118;  // 4.04 Hz
   }
   return 8192;
 }
@@ -114,7 +132,11 @@ void AntPlusDevice::on_page(const uint8_t *page, uint32_t now) {
   this->set_connected_(true);
 
   if (page[0] == PAGE_BATTERY_STATUS) {
-    this->decode_battery_(page[6], page[7]);
+    if (this->type_ == DeviceType::SHIFTING) {
+      this->decode_shifting_battery_(page);
+    } else {
+      this->decode_battery_(page[6], page[7]);
+    }
     return;
   }
   switch (this->type_) {
@@ -127,9 +149,81 @@ void AntPlusDevice::on_page(const uint8_t *page, uint32_t now) {
     case DeviceType::TEMPERATURE:
       this->decode_temperature_(page);
       break;
+    case DeviceType::POWER:
+      this->decode_power_(page);
+      break;
+    case DeviceType::SPEED:
+      this->decode_speed_(page, now);
+      break;
     case DeviceType::BIKE_RADAR:
-      break;  // only its battery is read
+    case DeviceType::SHIFTING:
+      break;  // only the battery is read
   }
+}
+
+void AntPlusDevice::decode_power_(const uint8_t *page) {
+#ifdef USE_SENSOR
+  // standard power-only page: [3] instantaneous cadence (rpm), [6-7] instantaneous power (W)
+  if (page[0] != 0x10)
+    return;
+  if (this->cadence_ != nullptr && page[3] != 0xFF)
+    this->cadence_->publish_state(page[3]);
+  if (this->power_ != nullptr)
+    this->power_->publish_state(page[6] | (page[7] << 8));
+#endif
+}
+
+void AntPlusDevice::decode_speed_(const uint8_t *page, uint32_t now) {
+  // every page: [4-5] time of the last wheel event (1/1024 s), [6-7] revolution count
+  if ((page[0] & 0x7F) == 4)
+    this->decode_battery_(page[2], page[3]);  // [2] fractional V, [3] coarse V + status
+  uint16_t event_time = page[4] | (page[5] << 8);
+  uint16_t revolutions = page[6] | (page[7] << 8);
+  if (this->last_event_time_ < 0) {
+    this->last_event_time_ = event_time;
+    this->last_revolutions_ = revolutions;
+    this->last_revolution_ms_ = now;
+    return;
+  }
+  uint16_t delta_revolutions = revolutions - this->last_revolutions_;
+  uint16_t delta_time = event_time - static_cast<uint16_t>(this->last_event_time_);
+#ifdef USE_SENSOR
+  if (delta_revolutions != 0 && delta_time != 0) {
+    this->total_speed_distance_ += delta_revolutions * this->wheel_circumference_;
+    if (this->speed_ != nullptr)
+      this->speed_->publish_state(delta_revolutions * this->wheel_circumference_ * 1024.0f / delta_time);
+    if (this->distance_ != nullptr)
+      this->distance_->publish_state(this->total_speed_distance_);
+    this->last_revolution_ms_ = now;
+    this->stopped_ = false;
+  } else if (!this->stopped_ && now - this->last_revolution_ms_ > 3000) {
+    // no wheel event for 3 s: the wheel stands still (the sensor keeps sending)
+    if (this->speed_ != nullptr)
+      this->speed_->publish_state(0);
+    this->stopped_ = true;
+  }
+#endif
+  this->last_event_time_ = event_time;
+  this->last_revolutions_ = revolutions;
+}
+
+void AntPlusDevice::decode_shifting_battery_(const uint8_t *page) {
+  // [2] battery identifier (bits 7:4, one per component), [7] bits 6:4 status:
+  // 1 new, 2 good, 3 ok, 4 low, 5 critical
+  uint8_t id = page[2] >> 4;
+  uint8_t status = (page[7] >> 4) & 0x07;
+  if (status < 1 || status > 5)
+    return;
+  if (this->battery_status_[id] != status)
+    ESP_LOGI(TAG, "Shifting %" PRIu32 " battery %u: status %u", this->ant_id_, id, status);
+  this->battery_status_[id] = status;
+#ifdef USE_BINARY_SENSOR
+  bool low = false;
+  for (uint8_t s : this->battery_status_)
+    low |= s >= 4;
+  if (this->battery_low_ != nullptr)
+    this->battery_low_->publish_state(low);
+#endif
 }
 
 void AntPlusDevice::decode_heart_rate_(const uint8_t *page) {
@@ -279,23 +373,15 @@ void AntPlus::setup() {
 }
 
 bool AntPlus::setup_discovery_channel_(uint8_t channel) {
-  // any ANT+ device type and number, minus the configured ones
-  antr_err_t err = antr_channel_assign(channel, CHANNEL_TYPE_SLAVE, NETWORK, 0);
+  // a background scan channel doesn't pair: it hears every ANT+ device on the frequency,
+  // and with the device ID appended to each message the configured ones are filtered out
+  antr_err_t err = antr_lib_config_set(ANTW_LIB_CONFIG_MESG_OUT_INC_DEVICE_ID);
+  if (err == 0)
+    err = antr_channel_assign(channel, CHANNEL_TYPE_SLAVE, NETWORK, EXT_ASSIGN_BACKGROUND_SCAN);
   if (err == 0)
     err = antr_channel_id_set(channel, 0, 0, 0);
   if (err == 0)
-    err = antr_channel_period_set(channel, 8192);
-  if (err == 0)
     err = antr_channel_radio_freq_set(channel, ANT_PLUS_FREQ);
-  for (uint8_t i = 0; err == 0 && i < this->devices_.size(); i++) {
-    uint32_t id = this->devices_[i]->get_ant_id();
-    // device type 0: a known device's other profiles (the HRM-Pro's stride channel
-    // shares its device number) aren't "unknown" either
-    const uint8_t entry[4] = {static_cast<uint8_t>(id & 0xFF), static_cast<uint8_t>((id >> 8) & 0xFF), 0, 0};
-    err = antr_id_list_add(channel, entry, i);
-  }
-  if (err == 0)
-    err = antr_id_list_config(channel, this->devices_.size(), 1);
   if (err != 0) {
     ESP_LOGW(TAG, "Discovery channel setup failed: 0x%02X", err);
     return false;
@@ -303,20 +389,24 @@ bool AntPlus::setup_discovery_channel_(uint8_t channel) {
   return this->open_channel_(channel);
 }
 
-void AntPlus::on_discovery_page_(uint32_t now) {
+void AntPlus::on_discovery_message_(const Message &msg, uint32_t now) {
+  uint16_t device_number = msg.device_id[0] | (msg.device_id[1] << 8);
+  if (device_number == 0 && msg.device_id[2] == 0)
+    return;  // no extended data
+  // a known device's other profiles (the HRM-Pro's stride channel) aren't unknown either
+  for (auto *device : this->devices_) {
+    if ((device->get_ant_id() & 0xFFFF) == device_number)
+      return;
+  }
+  uint32_t ant_id = (uint32_t(msg.device_id[3] & 0xF0) << 12) | device_number;
   this->last_unknown_ms_ = now;
-  if (this->unknown_state_)
-    return;
   this->unknown_state_ = true;
-  uint16_t device_number;
-  uint8_t device_type, trans_type;
-  if (antr_channel_id_get(this->devices_.size(), &device_number, &device_type, &trans_type) == 0)
-    ESP_LOGI(TAG, "Unknown ANT+ %s in range, ANT ID %" PRIu32 " (device type %u)", ant_device_type_name(device_type),
-             (uint32_t(trans_type & 0xF0) << 12) | device_number, device_type & 0x7F);
-#ifdef USE_BINARY_SENSOR
-  if (this->unknown_device_ != nullptr)
-    this->unknown_device_->publish_state(true);
-#endif
+  if (std::find(this->unknown_ids_.begin(), this->unknown_ids_.end(), ant_id) == this->unknown_ids_.end()) {
+    if (this->unknown_ids_.size() < 16)
+      this->unknown_ids_.push_back(ant_id);
+    ESP_LOGI(TAG, "Unknown ANT+ %s in range, ANT ID %" PRIu32 " (device type %u)",
+             ant_device_type_name(msg.device_id[2]), ant_id, msg.device_id[2] & 0x7F);
+  }
 }
 
 bool AntPlus::open_channel_(uint8_t channel) {
@@ -334,15 +424,11 @@ void AntPlus::loop() {
     bool discovery = this->discovery_ && msg.channel == this->devices_.size();
     if (msg.channel < this->devices_.size() || discovery) {
       if (msg.id == ANTW_MESG_RESPONSE_EVENT_ID) {
-        // search timed out (or we closed it): keep looking. A paired wildcard channel
-        // keeps the found ID, so the discovery channel goes back to "any" first
-        if (msg.data[0] == ANTW_EVENT_CHANNEL_CLOSED) {
-          if (discovery)
-            antr_channel_id_set(msg.channel, 0, 0, 0);
+        // search timed out and closed the channel: keep looking
+        if (msg.data[0] == ANTW_EVENT_CHANNEL_CLOSED)
           this->open_channel_(msg.channel);
-        }
       } else if (discovery) {
-        this->on_discovery_page_(now);
+        this->on_discovery_message_(msg, now);
       } else {
         this->devices_[msg.channel]->on_page(msg.data, now);
       }
@@ -355,11 +441,8 @@ void AntPlus::loop() {
     device->check_stale(now);
     any_connected |= device->is_connected();
   }
-  if (this->unknown_state_ && now - this->last_unknown_ms_ > STALE_MS) {
+  if (this->unknown_state_ && now - this->last_unknown_ms_ > STALE_MS)
     this->unknown_state_ = false;
-    // unpair the discovery channel so it can find the next unknown device
-    antr_channel_close(this->devices_.size());
-  }
 #ifdef USE_BINARY_SENSOR
   if (this->connected_ != nullptr)
     this->connected_->publish_state(any_connected);
@@ -382,6 +465,9 @@ void AntPlus::on_message(uint8_t id, const uint8_t *data, uint8_t len) {
   if ((id == ANTW_MESG_BROADCAST_DATA_ID || id == ANTW_MESG_ACKNOWLEDGED_DATA_ID) && len >= 9) {
     msg.id = id;
     std::memcpy(msg.data, data + 1, 8);
+    // [9] flag byte, 0x80 = device ID follows in [10-13]
+    if (len >= 14 && (data[9] & 0x80))
+      std::memcpy(msg.device_id, data + 10, 4);
   } else if (id == ANTW_MESG_RESPONSE_EVENT_ID && len >= 3 && data[1] == ANTW_MESG_EVENT_ID &&
              data[2] == ANTW_EVENT_CHANNEL_CLOSED) {
     msg.id = id;
