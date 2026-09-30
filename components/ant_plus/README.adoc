@@ -140,3 +140,14 @@ sensor:
     name: Garmin HRM-Pro Heart Rate
     internal: false
 ----
+
+== TODO
+
+* *Garmin Edge Remote* (ANT+ Controls, device type 16) as buttons with click and
+long click for every button. The remote is a slave that sends page 73 generic
+commands to a controllable-device master, so the component has to transmit: a
+master channel announcing itself (page 2), receiving the commands. Which
+command numbers the remote sends for short and long presses (Garmin custom
+commands 0x8000+?) has to be sniffed first.
+* Verify the untested types on real devices: `power`, `speed`,
+`fitness_equipment`, `shifting`.
