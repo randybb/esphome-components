@@ -18,5 +18,6 @@ external_components:
 |Component |Description
 |link:components/ant_plus/[ant_plus] |ANT+ sensors (heart rate, power, speed, FE-C, temperature, batteries) on the chip's own radio (nRF52840, zephyr fork, RadiANT)
 |link:components/audio_spectrum/[audio_spectrum] |Pass-through speaker that computes a spectrum of the audio for a Winamp style analyzer display
-|link:components/pn5180/[pn5180] |PN5180 reader of ISO 15693 (NFC-V) tags, decodes OpenPrintTag filament spool tags to sensors
+|link:components/openprinttag/[openprinttag] |OpenPrintTag filament spool tags read by pn5180: sensors, raw record for the Home Assistant integration, writing the consumed weight
+|link:components/pn5180/[pn5180] |PN5180 tag reader: ISO 15693 tags with their memory, UIDs of ISO 14443A tags (NTAG, MIFARE), a general tag reader for Home Assistant
 |===

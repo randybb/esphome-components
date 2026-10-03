@@ -17,11 +17,9 @@ DEPENDENCIES = ["spi"]
 MULTI_CONF = True
 
 CONF_PN5180_ID = "pn5180_id"
-CONF_ON_OPENPRINTTAG = "on_openprinttag"
 
 pn5180_ns = cg.esphome_ns.namespace("pn5180")
 PN5180 = pn5180_ns.class_("PN5180", cg.PollingComponent, spi.SPIDevice)
-FieldSource = pn5180_ns.enum("FieldSource")
 
 
 def _irq_pin(value):
@@ -40,7 +38,6 @@ CONFIG_SCHEMA = (
             cv.Optional(CONF_IRQ_PIN): _irq_pin,
             cv.Optional(CONF_ON_TAG): automation.validate_automation({}),
             cv.Optional(CONF_ON_TAG_REMOVED): automation.validate_automation({}),
-            cv.Optional(CONF_ON_OPENPRINTTAG): automation.validate_automation({}),
         }
     )
     .extend(cv.polling_component_schema("1s"))
@@ -70,11 +67,4 @@ async def to_code(config):
     for conf in config.get(CONF_ON_TAG_REMOVED, []):
         await automation.build_callback_automation(
             var, "add_on_tag_removed_callback", [(cg.std_string, "x")], conf
-        )
-    for conf in config.get(CONF_ON_OPENPRINTTAG, []):
-        await automation.build_callback_automation(
-            var,
-            "add_on_openprinttag_callback",
-            [(cg.std_string, "uid"), (cg.std_string, "payload")],
-            conf,
         )

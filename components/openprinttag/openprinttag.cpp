@@ -5,7 +5,7 @@
 #include <cstring>
 #include <string_view>
 
-namespace esphome::pn5180 {
+namespace esphome::openprinttag {
 
 static constexpr std::string_view MIME_TYPE = "application/vnd.openprinttag";
 static constexpr uint8_t TNF_MIME = 0x02;
@@ -236,4 +236,4 @@ bool parse_openprinttag(std::span<const uint8_t> mem, OpenPrintTag &out) {
   return false;
 }
 
-}  // namespace esphome::pn5180
+}  // namespace esphome::openprinttag

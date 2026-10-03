@@ -1,39 +1,22 @@
 = pn5180
 
-NXP PN5180 reader on SPI: decodes https://openprinttag.org/[OpenPrintTag]
-filament spool tags (ISO 15693 / NFC-V, ICODE SLIX2 and other NFC-V tags with an
-`application/vnd.openprinttag` NDEF record) and reads the UID of the common
-ISO 14443A tags (NTAG stickers, MIFARE cards and fobs), so it also serves as a
-general tag reader for Home Assistant (`homeassistant.tag_scanned` in `on_tag`).
+NXP PN5180 tag reader on SPI. Reads ISO 15693 (NFC-V, NFC Forum Type 5) tags,
+their whole memory included, and the UID of the common ISO 14443A tags (NTAG
+stickers, MIFARE cards and fobs), so it also serves as a general tag reader for
+Home Assistant (`homeassistant.tag_scanned` in `on_tag`).
 
-RC522 and PN532 cannot read OpenPrintTag tags at all, their radios only speak ISO 14443.
+Decoding is left to the components that listen to the reader:
+link:../openprinttag/[openprinttag] for OpenPrintTag filament spool tags.
 
 Every `update_interval` the reader runs an ISO 15693 inventory and, when no
 ISO 15693 tag answers, an ISO 14443A activation (WUPA, anticollision, select,
 HALT); 4 and 7 byte UIDs, which is what NTAG and MIFARE have. Of an ISO 14443A
-tag only the UID is read.
+tag only the UID is read. One tag at a time: with an ISO 15693 tag in the field,
+ISO 14443A tags are not looked for.
 
-A new tag fires `on_tag` with its UID; of an ISO 15693 tag the whole memory is
-then read once and the sensors are published. When the tag goes away `on_tag_removed` fires and the sensors go
-to unknown / empty. A tag without OpenPrintTag data still fires the triggers
-and the `uid` text sensor.
-
-The tag is written only on request: `write_aux(uid, data_hex)` puts an encoded
-aux region (from the Home Assistant integration's `openprinttag.update`) on the
-OpenPrintTag with that UID, writing only the blocks that change, then reads the
-tag again so the triggers and sensors report what really is on it:
-
-[source,yaml]
-----
-api:
-  actions:
-    - action: openprinttag_write_aux
-      variables:
-        uid: string
-        aux: string
-      then:
-        - lambda: id(pn5180_reader).write_aux(uid, aux);
-----
+A new tag fires `on_tag` with its UID; of an ISO 15693 tag the memory (from the
+capability container up to the size it tells) is then read once and handed to
+the listening components. When the tag goes away `on_tag_removed` fires.
 
 Nothing blocks the main loop: a frame is sent and the answer is picked up in
 `loop()`, which runs only while a tag is expected to answer. With `irq_pin` the
@@ -71,6 +54,7 @@ spi:
   miso_pin: GPIO13
 
 pn5180:
+  id: reader
   cs_pin: GPIO10
   busy_pin: GPIO9
   reset_pin: GPIO8
@@ -78,18 +62,9 @@ pn5180:
   on_tag:
     - homeassistant.tag_scanned: !lambda return x;
 
-sensor:
-  - platform: pn5180
-    type: remaining_weight
-    name: Filament remaining
-
 text_sensor:
   - platform: pn5180
-    type: material_type
-    name: Filament material
-  - platform: pn5180
-    type: primary_color
-    name: Filament color
+    name: Tag UID
 ----
 
 [cols="1,1,3",options="header"]
@@ -103,45 +78,23 @@ text_sensor:
 |`data_rate` |`4MHz` |SPI clock, the chip takes up to 7 MHz
 |`on_tag` | |New tag in the field, `x` is the UID (`E0-04-...` for ISO 15693 as printed on the tag, `04-A2-...` for ISO 14443A)
 |`on_tag_removed` | |Tag left the field, `x` is its UID
-|`on_openprinttag` | |OpenPrintTag read, `uid` and `payload` (the NDEF record payload as hex), for decoding elsewhere
 |===
 
-The https://github.com/randybb/ha-openprinttag[OpenPrintTag integration] for
-Home Assistant decodes the payload and adds the
-https://github.com/OpenPrintTag/openprinttag-database[database] record:
+`text_sensor` with `platform: pn5180`: the UID of the tag on the reader, empty
+without one.
 
-[source,yaml]
-----
-pn5180:
-  on_openprinttag:
-    - homeassistant.event:
-        event: esphome.openprinttag
-        data:
-          uid: !lambda return uid;
-          payload: !lambda return payload;
-  on_tag_removed:
-    - homeassistant.event:
-        event: esphome.openprinttag
-        data:
-          uid: !lambda return x;
-          payload: ""
-----
+== For decoding components
 
-=== Sensors
+A component decoding tags implements `pn5180::TagListener` and registers with
+`add_listener()`:
 
-`sensor` with `type`:
+* `on_tag(uid)`: a new tag of any kind
+* `on_type5_memory(uid, memory)`: the memory of an ISO 15693 tag, again after every write
+* `on_tag_removed(uid)`
 
-* `remaining_weight` — actual (or nominal) full weight minus `consumed_weight`
-* `consumed_weight` — from the auxiliary region, the printer updates it
-* `nominal_weight`, `actual_weight`, `empty_container_weight`
-* `density`, `filament_diameter`
-* `min_print_temperature`, `max_print_temperature`, `preheat_temperature`,
-  `min_bed_temperature`, `max_bed_temperature`, `chamber_temperature`,
-  `drying_temperature`, `drying_time`
-
-`text_sensor` with `type`: `uid`, `material_type` (`PLA`, `PETG`, …),
-`material_name`, `brand_name`, `primary_color` (`#rrggbb`, `#rrggbbaa` when not opaque), `gtin`,
-`storage_location`.
+`write(uid, offset, data)` writes bytes at an offset of that memory; only the
+blocks that change are written, then the tag is read again, so the listeners get
+what really is on it.
 
 == Firmware
 
@@ -152,16 +105,6 @@ the NXP NFC Cockpit under NXP's license, so they are not part of this component.
 
 == Range
 
-The OpenPrintTag reader spec asks for a 75 mm round antenna and 1 W of RF
-power to read a tag anywhere on a mounted spool. The common PN5180 modules have
-a small antenna and reach a few cm, which is fine for holding the spool to the
-reader but not for a spool holder.
-
-== Testing
-
-The OpenPrintTag parser is plain C++ and has a host test on the spec's sample tag:
-
-[source,sh]
-----
-g++ -std=c++20 -I components tests/pn5180/test_openprinttag.cpp components/pn5180/openprinttag.cpp && ./a.out
-----
+The common PN5180 modules have a small antenna and reach a few cm, which is fine
+for holding a tag to the reader. The OpenPrintTag reader spec asks for a 75 mm
+round antenna and 1 W of RF power to read a tag anywhere on a mounted spool.

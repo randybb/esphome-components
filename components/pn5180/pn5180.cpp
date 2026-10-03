@@ -1,9 +1,7 @@
 #include "pn5180.h"
 
 #include <algorithm>
-#include <cmath>
 #include <cstdio>
-#include <iterator>
 
 #include "esphome/core/log.h"
 
@@ -71,18 +69,15 @@ static constexpr uint32_t RX_TIMEOUT_MS = 50;
 static constexpr uint8_t BLOCKS_PER_READ = 8;
 static constexpr size_t MAX_TAG_MEMORY = 2048;
 
-// material_type enum of the spec, indexed by key
-static const char *const MATERIAL_TYPES[] = {
-    "PLA",  "PETG", "TPU", "ABS",  "ASA",  "PC",   "PCTG", "PP",  "PA6",  "PA11", "PA12", "PA66", "CPE",  "TPE", "HIPS",
-    "PHA",  "PET",  "PEI", "PBT",  "PVB",  "PVA",  "PEKK", "PEEK", "BVOH", "TPC", "PPS",  "PPSU", "PVC",  "PEBA", "PVDF",
-    "PPA",  "PCL",  "PES", "PMMA", "POM",  "PPE",  "PS",   "PSU", "TPI",  "SBS",  "OBC",  "EVA",  "PA612",
-};
-static constexpr uint32_t KEY_MATERIAL_TYPE = 9;
-static constexpr uint32_t KEY_PRIMARY_COLOR = 19;
-static constexpr uint32_t KEY_SECONDARY_COLOR_4 = 24;
-static constexpr uint32_t KEY_NOMINAL_WEIGHT = 16;
-static constexpr uint32_t KEY_ACTUAL_WEIGHT = 17;
-static constexpr uint32_t KEY_AUX_CONSUMED_WEIGHT = 0;
+// Memory size of a Type 5 tag from its capability container, 0 if it has none
+static size_t type5_memory_size(const std::vector<uint8_t> &cc) {
+  if (cc.size() < 4 || (cc[0] != 0xE1 && cc[0] != 0xE2))
+    return 0;
+  if (cc[2] != 0)
+    return cc[2] * 8;
+  return cc.size() < 8 ? 0 : ((cc[6] << 8) | cc[7]) * 8;  // 8 byte CC: MLEN in bytes 6-7
+}
+
 
 void PN5180::setup() {
   this->spi_setup();
@@ -129,7 +124,7 @@ void PN5180::setup() {
 void IRAM_ATTR PN5180::gpio_intr(PN5180 *arg) { arg->enable_loop_soon_any_context(); }
 
 void PN5180::dump_config() {
-  ESP_LOGCONFIG(TAG, "PN5180 (ISO 15693 OpenPrintTag, ISO 14443A UID):");
+  ESP_LOGCONFIG(TAG, "PN5180 (ISO 15693, ISO 14443A UID):");
   LOG_PIN("  BUSY Pin: ", this->busy_pin_);
   LOG_PIN("  Reset Pin: ", this->reset_pin_);
   LOG_PIN("  IRQ Pin: ", this->irq_pin_);
@@ -138,7 +133,7 @@ void PN5180::dump_config() {
     ESP_LOGE(TAG, "  Setup failed");
 }
 
-// Each poll: an ISO 15693 inventory (OpenPrintTag), without an answer an ISO 14443A
+// Each poll: an ISO 15693 inventory (e.g. OpenPrintTag), without an answer an ISO 14443A
 // activation (NTAG, MIFARE, cards), which gives the UID only
 void PN5180::update() {
   if (this->state_ == State::IDLE && this->set_type_a_(false))
@@ -218,13 +213,19 @@ void PN5180::found_tag_(const std::vector<uint8_t> &uid, bool type_a) {
     this->uid_ = uid;
     this->uid_type_a_ = type_a;
     this->tag_read_ = false;
-    this->tag_callback_.call(this->uid_string_());
+    const std::string uid_string = this->uid_string_();
+    this->tag_callback_.call(uid_string);
+    for (auto *listener : this->listeners_)
+      listener->on_tag(uid_string);
+#ifdef USE_TEXT_SENSOR
+    if (this->uid_text_sensor_ != nullptr)
+      this->uid_text_sensor_->publish_state(uid_string);
+#endif
   }
   this->memory_.clear();
   this->single_reads_ = false;
   if (type_a) {
     this->tag_read_ = true;  // the UID is all there is to read
-    this->publish_(nullptr);
   } else {
     this->read_next_();
   }
@@ -233,10 +234,16 @@ void PN5180::found_tag_(const std::vector<uint8_t> &uid, bool type_a) {
 void PN5180::no_tag_() {
   if (this->uid_.empty())
     return;
-  this->tag_removed_callback_.call(this->uid_string_());
+  const std::string uid_string = this->uid_string_();
   this->uid_.clear();
   this->memory_.clear();
-  this->publish_(nullptr);
+  this->tag_removed_callback_.call(uid_string);
+  for (auto *listener : this->listeners_)
+    listener->on_tag_removed(uid_string);
+#ifdef USE_TEXT_SENSOR
+  if (this->uid_text_sensor_ != nullptr)
+    this->uid_text_sensor_->publish_state("");
+#endif
 }
 
 bool PN5180::set_type_a_(bool type_a) {
@@ -325,12 +332,14 @@ void PN5180::read_next_() {
   if (this->memory_.empty() || (this->memory_.size() < 8 && this->memory_.size() >= 4 && this->memory_[2] == 0)) {
     size = this->memory_.size() + 1;  // capability container: block 0, an 8 byte one also block 1
   } else if (this->memory_.size() >= 4) {
-    size = std::min(t5t_memory_size(this->memory_), MAX_TAG_MEMORY);
+    size = std::min(type5_memory_size(this->memory_), MAX_TAG_MEMORY);
   }
   const size_t block = this->memory_.size() / std::max<size_t>(this->block_size_, 1);
   if (this->memory_.size() >= size || block > 0xFF) {
     this->tag_read_ = true;
-    this->publish_memory_();
+    const std::string uid_string = this->uid_string_();
+    for (auto *listener : this->listeners_)
+      listener->on_type5_memory(uid_string, this->memory_);
     return;
   }
   const bool multiple = !this->single_reads_ && this->memory_.size() >= 4 && (this->memory_[3] & 0x01);  // MBREAD
@@ -346,48 +355,28 @@ void PN5180::read_next_() {
   this->send_(State::READ, frame);
 }
 
-void PN5180::publish_memory_() {
-  OpenPrintTag tag;
-  if (parse_openprinttag(this->memory_, tag)) {
-    ESP_LOGD(TAG, "OpenPrintTag %s: %zu main, %zu aux fields", this->uid_string_().c_str(), tag.main.size(),
-             tag.aux.size());
-    this->publish_(&tag);
-    this->openprinttag_callback_.call(this->uid_string_(), format_hex(tag.payload.data(), tag.payload.size()));
-  } else {
-    ESP_LOGD(TAG, "Tag %s holds no OpenPrintTag record", this->uid_string_().c_str());
-    this->publish_(nullptr);
-  }
-}
-
-void PN5180::write_aux(const std::string &uid, const std::string &data_hex) {
-  OpenPrintTag tag;
-  if (uid.empty() || uid != this->uid_string_() || !this->tag_read_ || !parse_openprinttag(this->memory_, tag) ||
-      tag.aux_size == 0) {
-    ESP_LOGW(TAG, "No OpenPrintTag with an aux region and UID %s on the reader", uid.c_str());
-    return;
-  }
-  std::vector<uint8_t> data(data_hex.size() / 2);
-  const size_t start = tag.payload_offset + tag.aux_offset;
-  if (data.empty() || !parse_hex(data_hex, data.data(), data.size()) || data.size() > tag.aux_size ||
-      start + data.size() > this->memory_.size()) {
-    ESP_LOGW(TAG, "Aux data invalid or larger than the aux region (%zu B)", tag.aux_size);
-    return;
+bool PN5180::write(const std::string &uid, size_t offset, const std::vector<uint8_t> &data) {
+  if (uid.empty() || uid != this->uid_string_() || this->uid_type_a_ || !this->tag_read_ ||
+      offset + data.size() > this->memory_.size()) {
+    ESP_LOGW(TAG, "Write: no ISO 15693 tag %s on the reader, or past its memory", uid.c_str());
+    return false;
   }
   if (this->state_ != State::IDLE) {
-    ESP_LOGW(TAG, "Reader busy, write not started");
-    return;
+    ESP_LOGW(TAG, "Write: reader busy");
+    return false;
   }
-  // Only the blocks that differ; bytes after the new data stay (readers ignore them)
+  // Only the blocks that differ
   this->written_ = this->memory_;
-  std::copy(data.begin(), data.end(), this->written_.begin() + start);
+  std::copy(data.begin(), data.end(), this->written_.begin() + offset);
   this->write_blocks_.clear();
-  for (size_t block = start / this->block_size_; block * this->block_size_ < start + data.size(); block++) {
+  for (size_t block = offset / this->block_size_; block * this->block_size_ < offset + data.size(); block++) {
     const auto first = this->written_.begin() + block * this->block_size_;
     if (!std::equal(first, first + this->block_size_, this->memory_.begin() + block * this->block_size_))
       this->write_blocks_.push_back(block);
   }
-  ESP_LOGD(TAG, "Writing %zu blocks of the aux region", this->write_blocks_.size());
+  ESP_LOGD(TAG, "Writing %zu blocks", this->write_blocks_.size());
   this->write_next_();
+  return true;
 }
 
 void PN5180::write_next_() {
@@ -419,59 +408,6 @@ std::string PN5180::uid_string_() const {
     out += hex;
   }
   return out;
-}
-
-void PN5180::publish_(const OpenPrintTag *tag) {
-  auto find = [tag](FieldSource source, uint32_t key) -> const OptValue * {
-    if (tag == nullptr)
-      return nullptr;
-    const auto &region = source == SOURCE_AUX ? tag->aux : tag->main;
-    auto it = region.find(key);
-    return it == region.end() ? nullptr : &it->second;
-  };
-
-#ifdef USE_SENSOR
-  for (auto &f : this->sensors_) {
-    float value = NAN;
-    if (f.source == SOURCE_REMAINING_WEIGHT) {
-      const OptValue *full = find(SOURCE_MAIN, KEY_ACTUAL_WEIGHT);
-      if (full == nullptr || !full->is_number)
-        full = find(SOURCE_MAIN, KEY_NOMINAL_WEIGHT);
-      const OptValue *consumed = find(SOURCE_AUX, KEY_AUX_CONSUMED_WEIGHT);
-      if (full != nullptr && full->is_number)
-        value = full->number - (consumed != nullptr && consumed->is_number ? consumed->number : 0);
-    } else if (const OptValue *v = find(f.source, f.key); v != nullptr && v->is_number) {
-      value = v->number;
-    }
-    f.sensor->publish_state(value);
-  }
-#endif
-
-#ifdef USE_TEXT_SENSOR
-  for (auto &f : this->text_sensors_) {
-    std::string value;
-    if (f.source == SOURCE_UID) {
-      value = this->uid_string_();
-    } else if (const OptValue *v = find(f.source, f.key); v != nullptr) {
-      if (f.source == SOURCE_MAIN && f.key == KEY_MATERIAL_TYPE && v->is_number) {
-        const auto i = size_t(v->number);
-        value = i < std::size(MATERIAL_TYPES) ? MATERIAL_TYPES[i] : std::to_string(i);
-      } else if (f.source == SOURCE_MAIN && f.key >= KEY_PRIMARY_COLOR && f.key <= KEY_SECONDARY_COLOR_4) {
-        // RGBA, an opaque alpha is dropped so the value is a plain #rrggbb
-        const size_t n = v->bytes.size() == 4 && uint8_t(v->bytes[3]) == 0xFF ? 3 : v->bytes.size();
-        value = "#" + format_hex(reinterpret_cast<const uint8_t *>(v->bytes.data()), n);
-      } else if (v->is_number) {
-        char buf[24];
-        snprintf(buf, sizeof(buf), "%.15g", v->number);
-        value = buf;
-      } else {
-        value = v->bytes;
-      }
-    }
-    if (!f.sensor->has_state() || f.sensor->state != value)
-      f.sensor->publish_state(value);
-  }
-#endif
 }
 
 // ---- PN5180 host interface ----

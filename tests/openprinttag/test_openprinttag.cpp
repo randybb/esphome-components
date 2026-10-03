@@ -1,5 +1,5 @@
 // Host test of the OpenPrintTag parser:
-//   g++ -std=c++20 -I components tests/pn5180/test_openprinttag.cpp components/pn5180/openprinttag.cpp && ./a.out
+//   g++ -std=c++20 -I components tests/openprinttag/test_openprinttag.cpp components/openprinttag/openprinttag.cpp && ./a.out
 // sample_tag.bin is the spec's sample tag after its data_to_update.yaml (utils/rec_update.py)
 #include <cassert>
 #include <cmath>
@@ -8,12 +8,12 @@
 #include <iterator>
 #include <vector>
 
-#include "pn5180/openprinttag.h"
+#include "openprinttag/openprinttag.h"
 
-using namespace esphome::pn5180;
+using namespace esphome::openprinttag;
 
 int main() {
-  std::ifstream f("tests/pn5180/sample_tag.bin", std::ios::binary);
+  std::ifstream f("tests/openprinttag/sample_tag.bin", std::ios::binary);
   std::vector<uint8_t> mem((std::istreambuf_iterator<char>(f)), {});
   assert(mem.size() == 304);
   assert(t5t_memory_size(mem) == 304);

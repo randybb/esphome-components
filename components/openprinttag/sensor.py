@@ -12,7 +12,7 @@ from esphome.const import (
     UNIT_MINUTE,
 )
 
-from . import CONF_PN5180_ID, PN5180_CHILD_SCHEMA, FieldSource
+from . import CONF_OPENPRINTTAG_ID, OPENPRINTTAG_CHILD_SCHEMA, FieldSource
 
 UNIT_GRAM = "g"
 UNIT_GRAMS_PER_CUBIC_CENTIMETER = "g/cm³"
@@ -46,7 +46,7 @@ def _schema(config):
         kwargs["device_class"] = device_class
     if config[CONF_TYPE] in ("remaining_weight", "consumed_weight"):
         kwargs["state_class"] = STATE_CLASS_MEASUREMENT
-    return sensor.sensor_schema(**kwargs).extend(PN5180_CHILD_SCHEMA, _TYPE_SCHEMA)(config)
+    return sensor.sensor_schema(**kwargs).extend(OPENPRINTTAG_CHILD_SCHEMA, _TYPE_SCHEMA)(config)
 
 
 _TYPE_SCHEMA = cv.Schema({cv.Required(CONF_TYPE): cv.one_of(*TYPES, lower=True)})
@@ -54,7 +54,7 @@ CONFIG_SCHEMA = cv.All(_TYPE_SCHEMA.extend({}, extra=cv.ALLOW_EXTRA), _schema)
 
 
 async def to_code(config):
-    parent = await cg.get_variable(config[CONF_PN5180_ID])
+    parent = await cg.get_variable(config[CONF_OPENPRINTTAG_ID])
     var = await sensor.new_sensor(config)
     source, key, *_ = TYPES[config[CONF_TYPE]]
     cg.add(parent.add_sensor(var, getattr(FieldSource, source), key))

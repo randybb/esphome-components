@@ -7,23 +7,23 @@
 #include "esphome/core/component.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/helpers.h"
-#include "openprinttag.h"
 
-#ifdef USE_SENSOR
-#include "esphome/components/sensor/sensor.h"
-#endif
 #ifdef USE_TEXT_SENSOR
 #include "esphome/components/text_sensor/text_sensor.h"
 #endif
 
 namespace esphome::pn5180 {
 
-// Where a sensor takes its value from
-enum FieldSource : uint8_t {
-  SOURCE_MAIN = 0,
-  SOURCE_AUX = 1,
-  SOURCE_UID = 2,               // text only
-  SOURCE_REMAINING_WEIGHT = 3,  // numeric only: (actual or nominal) full weight - consumed weight
+// A component decoding the tags the PN5180 reads (e.g. openprinttag), registered with add_listener()
+class TagListener {
+ public:
+  // A new tag is in the field (any kind), `uid` as in on_tag
+  virtual void on_tag(const std::string &uid) {}
+  // The memory of an ISO 15693 (NFC Forum Type 5) tag was read, from block 0 (CC) up to the size
+  // the CC tells; again after every write
+  virtual void on_type5_memory(const std::string &uid, const std::vector<uint8_t> &memory) {}
+  // The tag left the field
+  virtual void on_tag_removed(const std::string &uid) {}
 };
 
 class PN5180 : public PollingComponent,
@@ -38,31 +38,20 @@ class PN5180 : public PollingComponent,
   void set_busy_pin(GPIOPin *pin) { this->busy_pin_ = pin; }
   void set_reset_pin(GPIOPin *pin) { this->reset_pin_ = pin; }
   void set_irq_pin(InternalGPIOPin *pin) { this->irq_pin_ = pin; }
+#ifdef USE_TEXT_SENSOR
+  void set_uid_text_sensor(text_sensor::TextSensor *sensor) { this->uid_text_sensor_ = sensor; }
+#endif
 
-  // Writes `data_hex` (an encoded aux region, e.g. from the HA integration) to the aux region of
-  // the OpenPrintTag on the reader, if its UID is `uid`. Only the blocks that change are written,
-  // then the tag is read again, so the triggers and sensors report what really is on the tag.
-  void write_aux(const std::string &uid, const std::string &data_hex);
-
+  void add_listener(TagListener *listener) { this->listeners_.push_back(listener); }
   template<typename F> void add_on_tag_callback(F &&callback) { this->tag_callback_.add(std::forward<F>(callback)); }
   template<typename F> void add_on_tag_removed_callback(F &&callback) {
     this->tag_removed_callback_.add(std::forward<F>(callback));
   }
-  // uid, OpenPrintTag NDEF payload as hex
-  template<typename F> void add_on_openprinttag_callback(F &&callback) {
-    this->openprinttag_callback_.add(std::forward<F>(callback));
-  }
 
-#ifdef USE_SENSOR
-  void add_sensor(sensor::Sensor *sensor, FieldSource source, uint32_t key) {
-    this->sensors_.push_back({sensor, source, key});
-  }
-#endif
-#ifdef USE_TEXT_SENSOR
-  void add_text_sensor(text_sensor::TextSensor *sensor, FieldSource source, uint32_t key) {
-    this->text_sensors_.push_back({sensor, source, key});
-  }
-#endif
+  // Writes `data` at byte `offset` of the memory of the ISO 15693 tag with UID `uid`, as passed to
+  // on_type5_memory. Only the blocks that change are written, then the tag is read again, so the
+  // listeners get what really is on it. False when the tag is not there or the reader is busy.
+  bool write(const std::string &uid, size_t offset, const std::vector<uint8_t> &data);
 
  protected:
   bool command_(const std::vector<uint8_t> &tx, uint8_t *rx = nullptr, size_t rx_len = 0);
@@ -86,8 +75,6 @@ class PN5180 : public PollingComponent,
   void on_response_(const std::vector<uint8_t> *response);
   void read_next_();
   void write_next_();
-  void publish_memory_();
-  void publish_(const OpenPrintTag *tag);
   static void gpio_intr(PN5180 *arg);
   std::string uid_string_() const;
 
@@ -95,13 +82,16 @@ class PN5180 : public PollingComponent,
   GPIOPin *reset_pin_{nullptr};
   InternalGPIOPin *irq_pin_{nullptr};
   bool irq_active_high_{true};
+#ifdef USE_TEXT_SENSOR
+  text_sensor::TextSensor *uid_text_sensor_{nullptr};
+#endif
 
   State state_{State::IDLE};
-  std::vector<uint8_t> memory_;  // tag memory read so far, kept for writes
+  std::vector<uint8_t> memory_;   // tag memory read so far, kept for writes
   std::vector<uint8_t> written_;  // tag memory after the pending writes
   std::vector<uint8_t> write_blocks_;
-  uint8_t read_count_{0};        // blocks in the pending read
-  bool single_reads_{false};     // the tag failed a multiple block read
+  uint8_t read_count_{0};     // blocks in the pending read
+  bool single_reads_{false};  // the tag failed a multiple block read
 
   std::vector<uint8_t> uid_;  // as sent over the air: ISO 15693 LSB first, ISO 14443A MSB first
   bool uid_type_a_{false};
@@ -112,26 +102,9 @@ class PN5180 : public PollingComponent,
   bool tag_read_{false};
   uint8_t block_size_{4};
 
+  std::vector<TagListener *> listeners_;
   CallbackManager<void(std::string)> tag_callback_;
   CallbackManager<void(std::string)> tag_removed_callback_;
-  CallbackManager<void(std::string, std::string)> openprinttag_callback_;
-
-#ifdef USE_SENSOR
-  struct SensorField {
-    sensor::Sensor *sensor;
-    FieldSource source;
-    uint32_t key;
-  };
-  std::vector<SensorField> sensors_;
-#endif
-#ifdef USE_TEXT_SENSOR
-  struct TextSensorField {
-    text_sensor::TextSensor *sensor;
-    FieldSource source;
-    uint32_t key;
-  };
-  std::vector<TextSensorField> text_sensors_;
-#endif
 };
 
 }  // namespace esphome::pn5180

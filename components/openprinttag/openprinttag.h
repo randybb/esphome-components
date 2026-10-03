@@ -7,7 +7,7 @@
 #include <vector>
 
 // Plain C++ (no ESPHome headers) so the parser can be tested on the host.
-namespace esphome::pn5180 {
+namespace esphome::openprinttag {
 
 // One decoded CBOR value: numbers in `number`, text and byte strings in `bytes`.
 // Arrays and maps (e.g. tags) are skipped and stay empty.
@@ -34,4 +34,4 @@ size_t t5t_memory_size(std::span<const uint8_t> cc);
 // Parses a Type 5 tag memory image (CC, NDEF TLV) holding an application/vnd.openprinttag record.
 bool parse_openprinttag(std::span<const uint8_t> mem, OpenPrintTag &out);
 
-}  // namespace esphome::pn5180
+}  // namespace esphome::openprinttag

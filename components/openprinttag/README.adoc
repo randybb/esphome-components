@@ -1,0 +1,99 @@
+= openprinttag
+
+Decodes https://openprinttag.org/[OpenPrintTag] filament spool tags (ISO 15693 /
+NFC-V, ICODE SLIX2 and other NFC-V tags with an `application/vnd.openprinttag`
+NDEF record) read by a link:../pn5180/[pn5180] reader, to sensors and a trigger,
+and writes the aux region of the tag (e.g. the consumed weight).
+
+RC522 and PN532 cannot read these tags at all, their radios only speak ISO 14443.
+
+The https://github.com/randybb/ha-openprinttag[OpenPrintTag integration] for
+Home Assistant decodes every field of the tag and adds the
+https://github.com/OpenPrintTag/openprinttag-database[database] record; the
+reader hands it the raw record with `on_openprinttag`. The sensors here work
+without it, e.g. for a display on the reader.
+
+== Configuration
+
+[source,yaml]
+----
+external_components:
+  - source: github://randybb/esphome-components
+    components: [pn5180, openprinttag]
+
+pn5180:
+  id: reader
+  # ...
+
+openprinttag:
+  id: spool
+  pn5180_id: reader  # optional with a single reader
+  on_openprinttag:
+    - homeassistant.event:
+        event: esphome.openprinttag
+        data:
+          uid: !lambda return uid;
+          payload: !lambda return payload;
+
+sensor:
+  - platform: openprinttag
+    type: remaining_weight
+    name: Filament remaining
+
+text_sensor:
+  - platform: openprinttag
+    type: material_type
+    name: Filament material
+  - platform: openprinttag
+    type: primary_color
+    name: Filament color
+----
+
+`on_openprinttag` fires when an OpenPrintTag is read, `uid` and `payload` (the
+NDEF record payload as hex); with an empty `payload` when it went away or
+another tag replaced it. When the tag is gone the sensors go unknown / empty.
+
+=== Sensors
+
+`sensor` with `type`:
+
+* `remaining_weight` — actual (or nominal) full weight minus `consumed_weight`
+* `consumed_weight` — from the auxiliary region, the printer updates it
+* `nominal_weight`, `actual_weight`, `empty_container_weight`
+* `density`, `filament_diameter`
+* `min_print_temperature`, `max_print_temperature`, `preheat_temperature`,
+  `min_bed_temperature`, `max_bed_temperature`, `chamber_temperature`,
+  `drying_temperature`, `drying_time`
+
+`text_sensor` with `type`: `material_type` (`PLA`, `PETG`, …), `material_name`,
+`brand_name`, `primary_color` (`#rrggbb`, `#rrggbbaa` when not opaque), `gtin`,
+`storage_location`. The tag UID is the reader's `text_sensor` (`platform: pn5180`).
+
+== Writing
+
+`write_aux(uid, data_hex)` puts an encoded aux region (from the Home Assistant
+integration's `openprinttag.update`) on the OpenPrintTag with that UID; the
+reader writes only the blocks that change, then reads the tag again so the
+trigger and sensors report what really is on it. The integration calls it
+through an API action:
+
+[source,yaml]
+----
+api:
+  actions:
+    - action: openprinttag_write_aux
+      variables:
+        uid: string
+        aux: string
+      then:
+        - lambda: id(spool).write_aux(uid, aux);
+----
+
+== Testing
+
+The parser is plain C++ and has a host test on the spec's sample tag:
+
+[source,sh]
+----
+g++ -std=c++20 -I components tests/openprinttag/test_openprinttag.cpp components/openprinttag/openprinttag.cpp && ./a.out
+----
