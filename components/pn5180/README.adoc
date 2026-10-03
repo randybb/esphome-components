@@ -1,14 +1,20 @@
 = pn5180
 
-NXP PN5180 reader of ISO 15693 (NFC-V, NFC Forum Type 5) tags on SPI, decoding
-https://openprinttag.org/[OpenPrintTag] filament spool tags (ICODE SLIX2 and other
-NFC-V tags with an `application/vnd.openprinttag` NDEF record).
+NXP PN5180 reader on SPI: decodes https://openprinttag.org/[OpenPrintTag]
+filament spool tags (ISO 15693 / NFC-V, ICODE SLIX2 and other NFC-V tags with an
+`application/vnd.openprinttag` NDEF record) and reads the UID of the common
+ISO 14443A tags (NTAG stickers, MIFARE cards and fobs), so it also serves as a
+general tag reader for Home Assistant (`homeassistant.tag_scanned` in `on_tag`).
 
-RC522 and PN532 cannot read these tags at all, their radios only speak ISO 14443.
+RC522 and PN532 cannot read OpenPrintTag tags at all, their radios only speak ISO 14443.
 
-Every `update_interval` the reader runs an ISO 15693 inventory. A new tag fires
-`on_tag` with its UID, then the whole tag memory is read once and the sensors
-are published. When the tag goes away `on_tag_removed` fires and the sensors go
+Every `update_interval` the reader runs an ISO 15693 inventory and, when no
+ISO 15693 tag answers, an ISO 14443A activation (WUPA, anticollision, select,
+HALT); 4 and 7 byte UIDs, which is what NTAG and MIFARE have. Of an ISO 14443A
+tag only the UID is read.
+
+A new tag fires `on_tag` with its UID; of an ISO 15693 tag the whole memory is
+then read once and the sensors are published. When the tag goes away `on_tag_removed` fires and the sensors go
 to unknown / empty. A tag without OpenPrintTag data still fires the triggers
 and the `uid` text sensor.
 
@@ -95,7 +101,7 @@ text_sensor:
 |`irq_pin` | |IRQ, wakes the loop when a tag answered; polarity is read from the chip's EEPROM
 |`update_interval` |`1s` |How often the field is polled for a tag
 |`data_rate` |`4MHz` |SPI clock, the chip takes up to 7 MHz
-|`on_tag` | |New tag in the field, `x` is the UID (`E0-04-...`, as printed on the tag)
+|`on_tag` | |New tag in the field, `x` is the UID (`E0-04-...` for ISO 15693 as printed on the tag, `04-A2-...` for ISO 14443A)
 |`on_tag_removed` | |Tag left the field, `x` is its UID
 |`on_openprinttag` | |OpenPrintTag read, `uid` and `payload` (the NDEF record payload as hex), for decoding elsewhere
 |===

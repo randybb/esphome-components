@@ -27,7 +27,9 @@ static constexpr uint8_t REG_SYSTEM_CONFIG = 0x00;
 static constexpr uint8_t REG_IRQ_ENABLE = 0x01;
 static constexpr uint8_t REG_IRQ_STATUS = 0x02;
 static constexpr uint8_t REG_IRQ_CLEAR = 0x03;
+static constexpr uint8_t REG_CRC_RX_CONFIG = 0x12;
 static constexpr uint8_t REG_RX_STATUS = 0x13;
+static constexpr uint8_t REG_CRC_TX_CONFIG = 0x19;
 static constexpr uint8_t REG_RF_STATUS = 0x1D;
 
 static constexpr uint8_t EEPROM_FIRMWARE_VERSION = 0x12;
@@ -44,6 +46,17 @@ static constexpr uint32_t TRANSCEIVE_STATE_WAIT_TRANSMIT = 1;
 // ISO 15693-3, ASK 100%, 26 kbps
 static constexpr uint8_t RF_CONFIG_ISO15693_TX = 0x0D;
 static constexpr uint8_t RF_CONFIG_ISO15693_RX = 0x8D;
+// ISO 14443A, 106 kbps
+static constexpr uint8_t RF_CONFIG_ISO14443A_TX = 0x00;
+static constexpr uint8_t RF_CONFIG_ISO14443A_RX = 0x80;
+static constexpr uint8_t ISO14443A_WUPA = 0x52;  // wakes HALTed tags too, so a tag stays seen
+static constexpr uint8_t ISO14443A_SEL_CL1 = 0x93;
+static constexpr uint8_t ISO14443A_SEL_CL2 = 0x95;
+static constexpr uint8_t ISO14443A_NVB_ANTICOLL = 0x20;
+static constexpr uint8_t ISO14443A_NVB_SELECT = 0x70;
+static constexpr uint8_t ISO14443A_CASCADE_TAG = 0x88;
+static constexpr uint8_t ISO14443A_HLTA = 0x50;
+
 static constexpr uint8_t ISO15693_FLAGS_INVENTORY = 0x26;  // high data rate, inventory, one slot
 static constexpr uint8_t ISO15693_FLAGS_ADDRESSED = 0x22;  // high data rate, addressed
 static constexpr uint8_t ISO15693_INVENTORY = 0x01;
@@ -116,7 +129,7 @@ void PN5180::setup() {
 void IRAM_ATTR PN5180::gpio_intr(PN5180 *arg) { arg->enable_loop_soon_any_context(); }
 
 void PN5180::dump_config() {
-  ESP_LOGCONFIG(TAG, "PN5180 (ISO 15693, OpenPrintTag):");
+  ESP_LOGCONFIG(TAG, "PN5180 (ISO 15693 OpenPrintTag, ISO 14443A UID):");
   LOG_PIN("  BUSY Pin: ", this->busy_pin_);
   LOG_PIN("  Reset Pin: ", this->reset_pin_);
   LOG_PIN("  IRQ Pin: ", this->irq_pin_);
@@ -125,8 +138,10 @@ void PN5180::dump_config() {
     ESP_LOGE(TAG, "  Setup failed");
 }
 
+// Each poll: an ISO 15693 inventory (OpenPrintTag), without an answer an ISO 14443A
+// activation (NTAG, MIFARE, cards), which gives the UID only
 void PN5180::update() {
-  if (this->state_ == State::IDLE)
+  if (this->state_ == State::IDLE && this->set_type_a_(false))
     this->send_(State::INVENTORY, {ISO15693_FLAGS_INVENTORY, ISO15693_INVENTORY, 0x00});
 }
 
@@ -157,24 +172,15 @@ void PN5180::on_response_(const std::vector<uint8_t> *response) {
 
   if (state == State::INVENTORY) {
     // response: flags, DSFID, UID (8 bytes, LSB first)
-    if (response == nullptr || response->size() < 10) {
-      if (!this->uid_.empty()) {
-        this->tag_removed_callback_.call(this->uid_string_());
-        this->uid_.clear();
-        this->publish_(nullptr);
-      }
-      return;
-    }
-    const std::vector<uint8_t> uid(response->begin() + 2, response->begin() + 10);
-    if (uid == this->uid_ && this->tag_read_)
-      return;
-    if (uid != this->uid_) {
-      this->uid_ = uid;
-      this->tag_read_ = false;
-      this->tag_callback_.call(this->uid_string_());
-    }
-    this->memory_.clear();
-    this->read_next_();
+    if (response == nullptr || response->size() < 10)
+      this->poll_type_a_();
+    else
+      this->found_tag_({response->begin() + 2, response->begin() + 10}, false);
+    return;
+  }
+
+  if (state == State::TYPE_A) {
+    this->on_type_a_(response);
     return;
   }
 
@@ -191,6 +197,11 @@ void PN5180::on_response_(const std::vector<uint8_t> *response) {
   // State::READ, response: flags, data
   if (response == nullptr || response->size() < 2 ||
       (!this->memory_.empty() && response->size() - 1 != size_t(this->read_count_) * this->block_size_)) {
+    if (this->read_count_ > 1 && this->memory_.size() >= 4) {
+      this->single_reads_ = true;  // some tags read fewer blocks at once
+      this->read_next_();
+      return;
+    }
     ESP_LOGW(TAG, "Reading block %zu failed", this->memory_.size() / this->block_size_);
     return;  // retried on the next update while the tag stays
   }
@@ -198,6 +209,115 @@ void PN5180::on_response_(const std::vector<uint8_t> *response) {
     this->block_size_ = response->size() - 1;  // block 0 tells the block size
   this->memory_.insert(this->memory_.end(), response->begin() + 1, response->end());
   this->read_next_();
+}
+
+void PN5180::found_tag_(const std::vector<uint8_t> &uid, bool type_a) {
+  if (uid == this->uid_ && type_a == this->uid_type_a_ && this->tag_read_)
+    return;
+  if (uid != this->uid_ || type_a != this->uid_type_a_) {
+    this->uid_ = uid;
+    this->uid_type_a_ = type_a;
+    this->tag_read_ = false;
+    this->tag_callback_.call(this->uid_string_());
+  }
+  this->memory_.clear();
+  this->single_reads_ = false;
+  if (type_a) {
+    this->tag_read_ = true;  // the UID is all there is to read
+    this->publish_(nullptr);
+  } else {
+    this->read_next_();
+  }
+}
+
+void PN5180::no_tag_() {
+  if (this->uid_.empty())
+    return;
+  this->tag_removed_callback_.call(this->uid_string_());
+  this->uid_.clear();
+  this->memory_.clear();
+  this->publish_(nullptr);
+}
+
+bool PN5180::set_type_a_(bool type_a) {
+  if (this->rf_type_a_ == type_a)
+    return true;
+  // the transceiver has to be idle for a new RF configuration
+  const bool ok = this->write_register_(CMD_WRITE_REGISTER_AND_MASK, REG_SYSTEM_CONFIG, 0xFFFFFFF8) && (type_a ? this->command_({CMD_LOAD_RF_CONFIG, RF_CONFIG_ISO14443A_TX, RF_CONFIG_ISO14443A_RX})
+                         : this->command_({CMD_LOAD_RF_CONFIG, RF_CONFIG_ISO15693_TX, RF_CONFIG_ISO15693_RX}));
+  if (ok)
+    this->rf_type_a_ = type_a;
+  return ok;
+}
+
+// The anticollision frames go without CRC, everything after them with it
+bool PN5180::set_crc_(bool on) {
+  if (on)
+    return this->write_register_(CMD_WRITE_REGISTER_OR_MASK, REG_CRC_RX_CONFIG, 0x01) &&
+           this->write_register_(CMD_WRITE_REGISTER_OR_MASK, REG_CRC_TX_CONFIG, 0x01);
+  return this->write_register_(CMD_WRITE_REGISTER_AND_MASK, REG_CRC_RX_CONFIG, 0xFFFFFFFE) &&
+         this->write_register_(CMD_WRITE_REGISTER_AND_MASK, REG_CRC_TX_CONFIG, 0xFFFFFFFE);
+}
+
+void PN5180::poll_type_a_() {
+  this->type_a_step_ = TypeAStep::WUPA;
+  if (this->set_type_a_(true) && this->set_crc_(false))
+    this->send_(State::TYPE_A, {ISO14443A_WUPA}, 7);  // a short frame of 7 bits
+  if (this->state_ != State::TYPE_A)
+    this->no_tag_();
+}
+
+// ponytail: single and double size UIDs (4, 7 bytes), triple size (10 bytes, rare) is not selected
+void PN5180::on_type_a_(const std::vector<uint8_t> *response) {
+  const auto step = this->type_a_step_;
+  if (step == TypeAStep::WUPA) {
+    if (response == nullptr || response->size() < 2) {  // ATQA
+      this->no_tag_();
+      return;
+    }
+    this->type_a_step_ = TypeAStep::ANTICOLL_1;
+    this->send_(State::TYPE_A, {ISO14443A_SEL_CL1, ISO14443A_NVB_ANTICOLL});
+    return;
+  }
+  // A tag answered the WUPA: a failure later is retried on the next poll, not a removal
+  if (response == nullptr)
+    return;
+
+  if (step == TypeAStep::ANTICOLL_1 || step == TypeAStep::ANTICOLL_2) {
+    const auto &r = *response;
+    if (r.size() != 5 || (r[0] ^ r[1] ^ r[2] ^ r[3]) != r[4])  // UID part + BCC
+      return;
+    const bool first = step == TypeAStep::ANTICOLL_1;
+    if (first)
+      std::copy(r.begin(), r.end(), this->cascade_1_);
+    std::vector<uint8_t> select = {first ? ISO14443A_SEL_CL1 : ISO14443A_SEL_CL2, ISO14443A_NVB_SELECT};
+    select.insert(select.end(), r.begin(), r.end());
+    if (!first)
+      std::copy(r.begin(), r.begin() + 4, this->cascade_2_);
+    this->type_a_step_ = first ? TypeAStep::SELECT_1 : TypeAStep::SELECT_2;
+    if (this->set_crc_(true))
+      this->send_(State::TYPE_A, select);
+    return;
+  }
+
+  // SAK
+  std::vector<uint8_t> uid;
+  if (step == TypeAStep::SELECT_1 && this->cascade_1_[0] == ISO14443A_CASCADE_TAG) {
+    this->type_a_step_ = TypeAStep::ANTICOLL_2;
+    if (this->set_crc_(false))
+      this->send_(State::TYPE_A, {ISO14443A_SEL_CL2, ISO14443A_NVB_ANTICOLL});
+    return;
+  }
+  if (step == TypeAStep::SELECT_1) {
+    uid.assign(this->cascade_1_, this->cascade_1_ + 4);
+  } else {
+    uid.assign(this->cascade_1_ + 1, this->cascade_1_ + 4);  // CL1 starts with the cascade tag
+    uid.insert(uid.end(), this->cascade_2_, this->cascade_2_ + 4);
+  }
+  ESP_LOGV(TAG, "ISO 14443A tag, SAK 0x%02X", (*response)[0]);
+  // HALT it, the WUPA of the next poll wakes it again
+  this->send_(State::IDLE, {ISO14443A_HLTA, 0x00}, 0, false);
+  this->found_tag_(uid, true);
 }
 
 void PN5180::read_next_() {
@@ -213,7 +333,7 @@ void PN5180::read_next_() {
     this->publish_memory_();
     return;
   }
-  const bool multiple = this->memory_.size() >= 4 && (this->memory_[3] & 0x01);  // MBREAD supported
+  const bool multiple = !this->single_reads_ && this->memory_.size() >= 4 && (this->memory_[3] & 0x01);  // MBREAD
   const size_t blocks = (size + this->block_size_ - 1) / this->block_size_;
   this->read_count_ = uint8_t(std::min<size_t>(multiple ? BLOCKS_PER_READ : 1, blocks - block));
 
@@ -293,8 +413,9 @@ void PN5180::write_next_() {
 std::string PN5180::uid_string_() const {
   std::string out;
   char hex[4];
-  for (auto it = this->uid_.rbegin(); it != this->uid_.rend(); ++it) {
-    snprintf(hex, sizeof(hex), out.empty() ? "%02X" : "-%02X", *it);
+  for (size_t i = 0; i < this->uid_.size(); i++) {
+    const uint8_t b = this->uid_type_a_ ? this->uid_[i] : this->uid_[this->uid_.size() - 1 - i];
+    snprintf(hex, sizeof(hex), out.empty() ? "%02X" : "-%02X", b);
     out += hex;
   }
   return out;
@@ -421,7 +542,7 @@ bool PN5180::rf_on_() {
   return true;
 }
 
-void PN5180::send_(State state, const std::vector<uint8_t> &frame) {
+void PN5180::send_(State state, const std::vector<uint8_t> &frame, uint8_t valid_bits, bool expect_response) {
   // Idle, then Transceive, which waits in WaitTransmit for SEND_DATA
   if (!this->write_register_(CMD_WRITE_REGISTER_AND_MASK, REG_SYSTEM_CONFIG, 0xFFFFFFF8) ||
       !this->write_register_(CMD_WRITE_REGISTER_OR_MASK, REG_SYSTEM_CONFIG, 0x00000003) ||
@@ -434,9 +555,9 @@ void PN5180::send_(State state, const std::vector<uint8_t> &frame) {
       return;
   } while (((rf_status >> 24) & 0x07) != TRANSCEIVE_STATE_WAIT_TRANSMIT && millis() - start < 10);
 
-  std::vector<uint8_t> tx = {CMD_SEND_DATA, 0x00};  // 0 = all bits of the last byte valid
+  std::vector<uint8_t> tx = {CMD_SEND_DATA, valid_bits};  // 0 = all bits of the last byte valid
   tx.insert(tx.end(), frame.begin(), frame.end());
-  if (!this->command_(tx))
+  if (!this->command_(tx) || !expect_response)
     return;
   this->state_ = state;
   // No answer means no tag (or it left mid read)
@@ -454,7 +575,7 @@ bool PN5180::receive_(std::vector<uint8_t> &response) {
   response.resize(length);
   if (!this->command_({CMD_READ_DATA, 0x00}, response.data(), length))
     return false;
-  if (response[0] & ISO15693_ERROR_FLAG) {
+  if (this->state_ != State::TYPE_A && (response[0] & ISO15693_ERROR_FLAG)) {
     ESP_LOGV(TAG, "Tag error 0x%02X", length > 1 ? response[1] : 0);
     return false;
   }

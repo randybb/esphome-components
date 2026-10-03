@@ -72,8 +72,16 @@ class PN5180 : public PollingComponent,
   bool wait_irq_(uint32_t mask, uint32_t timeout_ms);
   bool rf_on_();
 
-  enum class State : uint8_t { IDLE, INVENTORY, READ, WRITE };
-  void send_(State state, const std::vector<uint8_t> &frame);
+  enum class State : uint8_t { IDLE, INVENTORY, TYPE_A, READ, WRITE };
+  // ISO 14443A activation steps, in State::TYPE_A
+  enum class TypeAStep : uint8_t { WUPA, ANTICOLL_1, SELECT_1, ANTICOLL_2, SELECT_2 };
+  void send_(State state, const std::vector<uint8_t> &frame, uint8_t valid_bits = 0, bool expect_response = true);
+  bool set_type_a_(bool type_a);
+  bool set_crc_(bool on);
+  void poll_type_a_();
+  void on_type_a_(const std::vector<uint8_t> *response);
+  void found_tag_(const std::vector<uint8_t> &uid, bool type_a);
+  void no_tag_();
   bool receive_(std::vector<uint8_t> &response);
   void on_response_(const std::vector<uint8_t> *response);
   void read_next_();
@@ -93,8 +101,14 @@ class PN5180 : public PollingComponent,
   std::vector<uint8_t> written_;  // tag memory after the pending writes
   std::vector<uint8_t> write_blocks_;
   uint8_t read_count_{0};        // blocks in the pending read
+  bool single_reads_{false};     // the tag failed a multiple block read
 
-  std::vector<uint8_t> uid_;  // as sent over the air, LSB first
+  std::vector<uint8_t> uid_;  // as sent over the air: ISO 15693 LSB first, ISO 14443A MSB first
+  bool uid_type_a_{false};
+  bool rf_type_a_{false};  // RF configuration loaded: ISO 14443A, else ISO 15693
+  TypeAStep type_a_step_{TypeAStep::WUPA};
+  uint8_t cascade_1_[5]{};  // UID CL1 + BCC
+  uint8_t cascade_2_[4]{};  // UID CL2
   bool tag_read_{false};
   uint8_t block_size_{4};
 
