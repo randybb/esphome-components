@@ -43,6 +43,10 @@ class PN5180 : public PollingComponent,
   template<typename F> void add_on_tag_removed_callback(F &&callback) {
     this->tag_removed_callback_.add(std::forward<F>(callback));
   }
+  // uid, OpenPrintTag NDEF payload as hex
+  template<typename F> void add_on_openprinttag_callback(F &&callback) {
+    this->openprinttag_callback_.add(std::forward<F>(callback));
+  }
 
 #ifdef USE_SENSOR
   void add_sensor(sensor::Sensor *sensor, FieldSource source, uint32_t key) {
@@ -88,6 +92,7 @@ class PN5180 : public PollingComponent,
 
   CallbackManager<void(std::string)> tag_callback_;
   CallbackManager<void(std::string)> tag_removed_callback_;
+  CallbackManager<void(std::string, std::string)> openprinttag_callback_;
 
 #ifdef USE_SENSOR
   struct SensorField {

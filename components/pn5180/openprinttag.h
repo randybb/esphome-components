@@ -4,6 +4,7 @@
 #include <map>
 #include <span>
 #include <string>
+#include <vector>
 
 // Plain C++ (no ESPHome headers) so the parser can be tested on the host.
 namespace esphome::pn5180 {
@@ -21,6 +22,7 @@ using OptRegion = std::map<uint32_t, OptValue>;
 struct OpenPrintTag {
   OptRegion main;
   OptRegion aux;
+  std::vector<uint8_t> payload;  // the whole NDEF record payload, for decoding elsewhere
 };
 
 // Memory size of a Type 5 tag from its capability container, 0 if it has none.

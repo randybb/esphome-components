@@ -32,6 +32,7 @@ int main() {
   assert(tag.main.at(35).number == 220);
   assert(tag.main.at(42).number == 75);  // last field after the array
   assert(tag.aux.at(0).number == 100);
+  assert(tag.payload.size() == 261 && tag.payload[0] == 0xA1);  // meta {2: 226}
 
   // Truncated or foreign data must not parse
   OpenPrintTag bad;

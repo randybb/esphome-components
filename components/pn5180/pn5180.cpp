@@ -221,6 +221,7 @@ void PN5180::publish_memory_() {
     ESP_LOGD(TAG, "OpenPrintTag %s: %zu main, %zu aux fields", this->uid_string_().c_str(), tag.main.size(),
              tag.aux.size());
     this->publish_(&tag);
+    this->openprinttag_callback_.call(this->uid_string_(), format_hex(tag.payload.data(), tag.payload.size()));
   } else {
     ESP_LOGD(TAG, "Tag %s holds no OpenPrintTag record", this->uid_string_().c_str());
     this->publish_(nullptr);

@@ -82,7 +82,29 @@ text_sensor:
 |`data_rate` |`4MHz` |SPI clock, the chip takes up to 7 MHz
 |`on_tag` | |New tag in the field, `x` is the UID (`E0-04-...`, as printed on the tag)
 |`on_tag_removed` | |Tag left the field, `x` is its UID
+|`on_openprinttag` | |OpenPrintTag read, `uid` and `payload` (the NDEF record payload as hex), for decoding elsewhere
 |===
+
+The https://github.com/randybb/ha-openprinttag[OpenPrintTag integration] for
+Home Assistant decodes the payload and adds the
+https://github.com/OpenPrintTag/openprinttag-database[database] record:
+
+[source,yaml]
+----
+pn5180:
+  on_openprinttag:
+    - homeassistant.event:
+        event: esphome.openprinttag
+        data:
+          uid: !lambda return uid;
+          payload: !lambda return payload;
+  on_tag_removed:
+    - homeassistant.event:
+        event: esphome.openprinttag
+        data:
+          uid: !lambda return x;
+          payload: ""
+----
 
 === Sensors
 

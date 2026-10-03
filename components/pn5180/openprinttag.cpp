@@ -133,6 +133,7 @@ struct Cbor {
 };
 
 bool parse_payload(std::span<const uint8_t> payload, OpenPrintTag &out) {
+  out.payload.assign(payload.begin(), payload.end());
   OptRegion meta;
   Cbor meta_cbor{payload};
   if (!meta_cbor.map(meta))
