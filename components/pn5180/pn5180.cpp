@@ -49,6 +49,7 @@ static constexpr uint8_t ISO15693_FLAGS_ADDRESSED = 0x22;  // high data rate, ad
 static constexpr uint8_t ISO15693_INVENTORY = 0x01;
 static constexpr uint8_t ISO15693_READ_SINGLE_BLOCK = 0x20;
 static constexpr uint8_t ISO15693_READ_MULTIPLE_BLOCKS = 0x23;
+static constexpr uint8_t ISO15693_WRITE_SINGLE_BLOCK = 0x21;
 static constexpr uint8_t ISO15693_ERROR_FLAG = 0x01;
 
 static constexpr uint32_t BUSY_TIMEOUT_MS = 100;
@@ -177,6 +178,16 @@ void PN5180::on_response_(const std::vector<uint8_t> *response) {
     return;
   }
 
+  if (state == State::WRITE) {
+    // A write is confirmed after the tag programmed it, which can outlast the receive window;
+    // the read after the last block shows whether it took
+    if (response == nullptr)
+      ESP_LOGW(TAG, "Writing block %u not confirmed", this->write_blocks_.front());
+    this->write_blocks_.erase(this->write_blocks_.begin());
+    this->write_next_();
+    return;
+  }
+
   // State::READ, response: flags, data
   if (response == nullptr || response->size() < 2 ||
       (!this->memory_.empty() && response->size() - 1 != size_t(this->read_count_) * this->block_size_)) {
@@ -226,8 +237,56 @@ void PN5180::publish_memory_() {
     ESP_LOGD(TAG, "Tag %s holds no OpenPrintTag record", this->uid_string_().c_str());
     this->publish_(nullptr);
   }
-  this->memory_.clear();
-  this->memory_.shrink_to_fit();
+}
+
+void PN5180::write_aux(const std::string &uid, const std::string &data_hex) {
+  OpenPrintTag tag;
+  if (uid.empty() || uid != this->uid_string_() || !this->tag_read_ || !parse_openprinttag(this->memory_, tag) ||
+      tag.aux_size == 0) {
+    ESP_LOGW(TAG, "No OpenPrintTag with an aux region and UID %s on the reader", uid.c_str());
+    return;
+  }
+  std::vector<uint8_t> data(data_hex.size() / 2);
+  const size_t start = tag.payload_offset + tag.aux_offset;
+  if (data.empty() || !parse_hex(data_hex, data.data(), data.size()) || data.size() > tag.aux_size ||
+      start + data.size() > this->memory_.size()) {
+    ESP_LOGW(TAG, "Aux data invalid or larger than the aux region (%zu B)", tag.aux_size);
+    return;
+  }
+  if (this->state_ != State::IDLE) {
+    ESP_LOGW(TAG, "Reader busy, write not started");
+    return;
+  }
+  // Only the blocks that differ; bytes after the new data stay (readers ignore them)
+  this->written_ = this->memory_;
+  std::copy(data.begin(), data.end(), this->written_.begin() + start);
+  this->write_blocks_.clear();
+  for (size_t block = start / this->block_size_; block * this->block_size_ < start + data.size(); block++) {
+    const auto first = this->written_.begin() + block * this->block_size_;
+    if (!std::equal(first, first + this->block_size_, this->memory_.begin() + block * this->block_size_))
+      this->write_blocks_.push_back(block);
+  }
+  ESP_LOGD(TAG, "Writing %zu blocks of the aux region", this->write_blocks_.size());
+  this->write_next_();
+}
+
+void PN5180::write_next_() {
+  if (this->write_blocks_.empty()) {
+    this->tag_read_ = false;  // read it again on the next update, that publishes what the tag holds
+    return;
+  }
+  const uint8_t block = this->write_blocks_.front();
+  std::vector<uint8_t> frame = {ISO15693_FLAGS_ADDRESSED, ISO15693_WRITE_SINGLE_BLOCK};
+  frame.insert(frame.end(), this->uid_.begin(), this->uid_.end());
+  frame.push_back(block);
+  const auto first = this->written_.begin() + block * this->block_size_;
+  frame.insert(frame.end(), first, first + this->block_size_);
+  this->send_(State::WRITE, frame);
+  if (this->state_ != State::WRITE) {  // the PN5180 did not take the frame
+    ESP_LOGW(TAG, "Write aborted");
+    this->write_blocks_.clear();
+    this->tag_read_ = false;
+  }
 }
 
 // UID with the 0xE0 manufacturer byte first, as OpenPrintTag (and the tag label) writes it

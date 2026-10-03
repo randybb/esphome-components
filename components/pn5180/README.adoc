@@ -12,7 +12,22 @@ are published. When the tag goes away `on_tag_removed` fires and the sensors go
 to unknown / empty. A tag without OpenPrintTag data still fires the triggers
 and the `uid` text sensor.
 
-Reading only: the tag is never written.
+The tag is written only on request: `write_aux(uid, data_hex)` puts an encoded
+aux region (from the Home Assistant integration's `openprinttag.update`) on the
+OpenPrintTag with that UID, writing only the blocks that change, then reads the
+tag again so the triggers and sensors report what really is on it:
+
+[source,yaml]
+----
+api:
+  actions:
+    - action: openprinttag_write_aux
+      variables:
+        uid: string
+        aux: string
+      then:
+        - lambda: id(pn5180_reader).write_aux(uid, aux);
+----
 
 Nothing blocks the main loop: a frame is sent and the answer is picked up in
 `loop()`, which runs only while a tag is expected to answer. With `irq_pin` the

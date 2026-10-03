@@ -33,6 +33,9 @@ int main() {
   assert(tag.main.at(42).number == 75);  // last field after the array
   assert(tag.aux.at(0).number == 100);
   assert(tag.payload.size() == 261 && tag.payload[0] == 0xA1);  // meta {2: 226}
+  assert(tag.payload_offset == 42);
+  assert(tag.aux_offset == 226 && tag.aux_size == 261 - 226);  // till the payload end
+  assert(mem[tag.payload_offset + tag.aux_offset] == 0xBF);     // aux map {0: 100}
 
   // Truncated or foreign data must not parse
   OpenPrintTag bad;

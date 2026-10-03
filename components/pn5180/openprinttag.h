@@ -23,6 +23,9 @@ struct OpenPrintTag {
   OptRegion main;
   OptRegion aux;
   std::vector<uint8_t> payload;  // the whole NDEF record payload, for decoding elsewhere
+  size_t payload_offset{0};      // of the payload in the tag memory
+  size_t aux_offset{0};          // of the aux region in the payload
+  size_t aux_size{0};            // 0: no aux region
 };
 
 // Memory size of a Type 5 tag from its capability container, 0 if it has none.

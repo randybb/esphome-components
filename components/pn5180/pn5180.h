@@ -39,6 +39,11 @@ class PN5180 : public PollingComponent,
   void set_reset_pin(GPIOPin *pin) { this->reset_pin_ = pin; }
   void set_irq_pin(InternalGPIOPin *pin) { this->irq_pin_ = pin; }
 
+  // Writes `data_hex` (an encoded aux region, e.g. from the HA integration) to the aux region of
+  // the OpenPrintTag on the reader, if its UID is `uid`. Only the blocks that change are written,
+  // then the tag is read again, so the triggers and sensors report what really is on the tag.
+  void write_aux(const std::string &uid, const std::string &data_hex);
+
   template<typename F> void add_on_tag_callback(F &&callback) { this->tag_callback_.add(std::forward<F>(callback)); }
   template<typename F> void add_on_tag_removed_callback(F &&callback) {
     this->tag_removed_callback_.add(std::forward<F>(callback));
@@ -67,11 +72,12 @@ class PN5180 : public PollingComponent,
   bool wait_irq_(uint32_t mask, uint32_t timeout_ms);
   bool rf_on_();
 
-  enum class State : uint8_t { IDLE, INVENTORY, READ };
+  enum class State : uint8_t { IDLE, INVENTORY, READ, WRITE };
   void send_(State state, const std::vector<uint8_t> &frame);
   bool receive_(std::vector<uint8_t> &response);
   void on_response_(const std::vector<uint8_t> *response);
   void read_next_();
+  void write_next_();
   void publish_memory_();
   void publish_(const OpenPrintTag *tag);
   static void gpio_intr(PN5180 *arg);
@@ -83,7 +89,9 @@ class PN5180 : public PollingComponent,
   bool irq_active_high_{true};
 
   State state_{State::IDLE};
-  std::vector<uint8_t> memory_;  // tag memory read so far
+  std::vector<uint8_t> memory_;  // tag memory read so far, kept for writes
+  std::vector<uint8_t> written_;  // tag memory after the pending writes
+  std::vector<uint8_t> write_blocks_;
   uint8_t read_count_{0};        // blocks in the pending read
 
   std::vector<uint8_t> uid_;  // as sent over the air, LSB first

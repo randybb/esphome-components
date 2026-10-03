@@ -1,5 +1,6 @@
 #include "openprinttag.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <string_view>
@@ -151,6 +152,10 @@ bool parse_payload(std::span<const uint8_t> payload, OpenPrintTag &out) {
     return false;
   const size_t aux_offset = offset(2, payload.size());
   if (aux_offset < payload.size()) {
+    // the aux region spans its size, or till the main region after it, or the payload end
+    const size_t end = main_offset > aux_offset ? main_offset : payload.size();
+    out.aux_offset = aux_offset;
+    out.aux_size = std::min(offset(3, end - aux_offset), end - aux_offset);
     Cbor aux_cbor{payload.subspan(aux_offset)};
     if (!aux_cbor.map(out.aux))
       out.aux.clear();  // a blank aux region is not an error
@@ -158,7 +163,7 @@ bool parse_payload(std::span<const uint8_t> payload, OpenPrintTag &out) {
   return true;
 }
 
-bool parse_ndef(std::span<const uint8_t> msg, OpenPrintTag &out) {
+bool parse_ndef(std::span<const uint8_t> msg, const uint8_t *mem, OpenPrintTag &out) {
   size_t pos = 0;
   while (pos + 3 <= msg.size()) {
     const uint8_t header = msg[pos++];
@@ -183,8 +188,10 @@ bool parse_ndef(std::span<const uint8_t> msg, OpenPrintTag &out) {
       return false;
     const std::string_view type(reinterpret_cast<const char *>(&msg[pos]), type_length);
     pos += type_length + id_length;
-    if ((header & 0x07) == TNF_MIME && type == MIME_TYPE)
+    if ((header & 0x07) == TNF_MIME && type == MIME_TYPE) {
+      out.payload_offset = &msg[pos] - mem;
       return parse_payload(msg.subspan(pos, payload_length), out);
+    }
     pos += payload_length;
     if (header & 0x40)  // message end
       break;
@@ -223,7 +230,7 @@ bool parse_openprinttag(std::span<const uint8_t> mem, OpenPrintTag &out) {
     if (pos + length > mem.size())
       return false;
     if (type == TLV_NDEF)
-      return parse_ndef(mem.subspan(pos, length), out);
+      return parse_ndef(mem.subspan(pos, length), mem.data(), out);
     pos += length;
   }
   return false;
