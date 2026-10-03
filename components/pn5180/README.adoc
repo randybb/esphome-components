@@ -1,0 +1,124 @@
+= pn5180
+
+NXP PN5180 reader of ISO 15693 (NFC-V, NFC Forum Type 5) tags on SPI, decoding
+https://openprinttag.org/[OpenPrintTag] filament spool tags (ICODE SLIX2 and other
+NFC-V tags with an `application/vnd.openprinttag` NDEF record).
+
+RC522 and PN532 cannot read these tags at all, their radios only speak ISO 14443.
+
+Every `update_interval` the reader runs an ISO 15693 inventory. A new tag fires
+`on_tag` with its UID, then the whole tag memory is read once and the sensors
+are published. When the tag goes away `on_tag_removed` fires and the sensors go
+to unknown / empty. A tag without OpenPrintTag data still fires the triggers
+and the `uid` text sensor.
+
+Reading only: the tag is never written.
+
+Nothing blocks the main loop: a frame is sent and the answer is picked up in
+`loop()`, which runs only while a tag is expected to answer. With `irq_pin` the
+loop sleeps until the PN5180 raises IRQ; without it, it polls the IRQ status
+register over SPI while waiting.
+
+== Wiring
+
+The usual PN5180 module needs both 5 V (RF driver) and 3.3 V (logic). The RF
+field stays on all the time.
+
+[cols="1,3",options="header"]
+|===
+|PN5180 |ESP
+|NSS |`cs_pin`
+|MOSI, MISO, SCK |`spi` bus
+|BUSY |`busy_pin`
+|RST |`reset_pin` (optional, recommended)
+|IRQ |`irq_pin` (optional, recommended)
+|REQ |leave open, high at reset starts the firmware download mode
+|AUX, GPIO |leave open
+|===
+
+== Configuration
+
+[source,yaml]
+----
+external_components:
+  - source: github://randybb/esphome-components
+    components: [pn5180]
+
+spi:
+  clk_pin: GPIO12
+  mosi_pin: GPIO11
+  miso_pin: GPIO13
+
+pn5180:
+  cs_pin: GPIO10
+  busy_pin: GPIO9
+  reset_pin: GPIO8
+  irq_pin: GPIO14
+  on_tag:
+    - homeassistant.tag_scanned: !lambda return x;
+
+sensor:
+  - platform: pn5180
+    type: remaining_weight
+    name: Filament remaining
+
+text_sensor:
+  - platform: pn5180
+    type: material_type
+    name: Filament material
+  - platform: pn5180
+    type: primary_color
+    name: Filament color
+----
+
+[cols="1,1,3",options="header"]
+|===
+|Option |Default |Description
+|`cs_pin` |required |NSS
+|`busy_pin` |required |BUSY, every command waits for it to go low
+|`reset_pin` | |RST, pulsed on boot
+|`irq_pin` | |IRQ, wakes the loop when a tag answered; polarity is read from the chip's EEPROM
+|`update_interval` |`1s` |How often the field is polled for a tag
+|`data_rate` |`4MHz` |SPI clock, the chip takes up to 7 MHz
+|`on_tag` | |New tag in the field, `x` is the UID (`E0-04-...`, as printed on the tag)
+|`on_tag_removed` | |Tag left the field, `x` is its UID
+|===
+
+=== Sensors
+
+`sensor` with `type`:
+
+* `remaining_weight` — actual (or nominal) full weight minus `consumed_weight`
+* `consumed_weight` — from the auxiliary region, the printer updates it
+* `nominal_weight`, `actual_weight`, `empty_container_weight`
+* `density`, `filament_diameter`
+* `min_print_temperature`, `max_print_temperature`, `preheat_temperature`,
+  `min_bed_temperature`, `max_bed_temperature`, `chamber_temperature`,
+  `drying_temperature`, `drying_time`
+
+`text_sensor` with `type`: `uid`, `material_type` (`PLA`, `PETG`, …),
+`material_name`, `brand_name`, `primary_color` (`#rrggbb`, `#rrggbbaa` when not opaque), `gtin`,
+`storage_location`.
+
+== Firmware
+
+The firmware version is logged on boot (`Firmware 3.5`, `4.1`, ...). Cheap
+modules often ship 3.x; ISO 15693 reading works with it. NXP updates the
+firmware over the same SPI with REQ held high at reset, the images come with
+the NXP NFC Cockpit under NXP's license, so they are not part of this component.
+
+== Range
+
+The OpenPrintTag reader spec asks for a 75 mm round antenna and 1 W of RF
+power to read a tag anywhere on a mounted spool. The common PN5180 modules have
+a small antenna and reach a few cm, which is fine for holding the spool to the
+reader but not for a spool holder.
+
+== Testing
+
+The OpenPrintTag parser is plain C++ and has a host test on the spec's sample tag:
+
+[source,sh]
+----
+g++ -std=c++20 -I components tests/pn5180/test_openprinttag.cpp components/pn5180/openprinttag.cpp && ./a.out
+----
