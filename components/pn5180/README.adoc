@@ -6,13 +6,15 @@ stickers, MIFARE cards and fobs), so it also serves as a general tag reader for
 Home Assistant (`homeassistant.tag_scanned` in `on_tag`).
 
 Decoding is left to the components that listen to the reader:
-link:../openprinttag/[openprinttag] for OpenPrintTag filament spool tags.
+link:../openprinttag/[openprinttag] for OpenPrintTag filament spool tags,
+link:../creality_cfs/[creality_cfs] for Creality CFS tags (MIFARE Classic).
 
-Every `update_interval` the reader runs an ISO 15693 inventory and, when no
-ISO 15693 tag answers, an ISO 14443A activation (WUPA, anticollision, select,
-HALT); 4 and 7 byte UIDs, which is what NTAG and MIFARE have. Of an ISO 14443A
-tag only the UID is read. One tag at a time: with an ISO 15693 tag in the field,
-ISO 14443A tags are not looked for.
+Every `update_interval` the reader runs an ISO 15693 inventory, then an
+ISO 14443A activation (WUPA, anticollision, select, HALT); 4 and 7 byte UIDs,
+which is what NTAG and MIFARE have. One tag of each protocol is tracked, so a
+spool with an OpenPrintTag and a Creality tag shows both. A tag counts as
+removed after 3 polls without an answer: two tags close to the antenna detune
+it and single frames get lost.
 
 A new tag fires `on_tag` with its UID; of an ISO 15693 tag the memory (from the
 capability container up to the size it tells) is then read once and handed to
@@ -90,6 +92,9 @@ A component decoding tags implements `pn5180::TagListener` and registers with
 
 * `on_tag(uid)`: a new tag of any kind
 * `on_type5_memory(uid, memory)`: the memory of an ISO 15693 tag, again after every write
+* `on_iso14443a(uid, uid_bytes, sak)`: an ISO 14443A tag is selected, on every poll;
+  `mifare_authenticate()`, `mifare_read()` and `mifare_write()` (MIFARE Classic
+  blocks) work inside this call
 * `on_tag_removed(uid)`
 
 `write(uid, offset, data)` writes bytes at an offset of that memory; only the

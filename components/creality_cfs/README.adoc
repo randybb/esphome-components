@@ -1,0 +1,87 @@
+= creality_cfs
+
+Reads and writes Creality CFS filament tags (K2 / K1 CFS, MIFARE Classic 1K) on
+a link:../pn5180/[pn5180] reader. The format comes from the community's reverse
+engineering (https://github.com/DnG-Crafts/K2-RFID[DnG-Crafts/K2-RFID]):
+
+* sector 1 (blocks 4-6): the record, 48 ASCII characters, AES-128-ECB with the
+  key of the Creality firmware; key A and B of the sector derived from the UID
+  (AES-128-ECB of the UID repeated to 16 bytes, its first 6 bytes)
+* sector 2 (blocks 8-10): 48 more plain characters, factory key, optional
+
+[cols="1,1,3",options="header"]
+|===
+|Characters |Field |Example
+|0-4 |date: month (1 hex digit), day, year |`AB124`
+|5-8 |vendor |`0276` Creality
+|9-10 |batch |`A2`
+|11-16 |material ID of the printer's material database |`106002`
+|17-23 |color, `0RRGGBB` |`06C4E43`
+|24-27 |length in meters, hex |`0330` (816 m, 1 kg)
+|28-33 |serial |`000001`
+|34-47 |reserved |
+|===
+
+A spool usually carries two of these tags, one on each side, plus maybe an
+OpenPrintTag; the reader tracks one tag of each protocol.
+
+== Configuration
+
+[source,yaml]
+----
+external_components:
+  - source: github://randybb/esphome-components
+    components: [pn5180, creality_cfs]
+
+creality_cfs:
+  id: creality
+  on_creality:
+    - homeassistant.event:
+        event: esphome.creality_cfs
+        data:
+          uid: !lambda return uid;
+          data: !lambda return data;
+
+sensor:
+  - platform: creality_cfs
+    name: Creality length
+
+text_sensor:
+  - platform: creality_cfs
+    type: material_id
+    name: Creality material ID
+  - platform: creality_cfs
+    type: color
+    name: Creality color
+----
+
+`on_creality` fires when a Creality tag is read, `uid` and `data` (the record:
+sector 1 decrypted, then sector 2, trailing spaces cut); with an empty `data`
+when the tag went away. Blank tags and other MIFARE Classic tags fire nothing.
+
+`sensor`: the length in meters. `text_sensor` with `type`: `date`, `vendor`,
+`batch`, `material_id`, `color` (`#RRGGBB`), `serial`. When the tag is gone they
+go unknown / empty.
+
+== Writing
+
+`write(uid, data)` writes a record (34 to 48 characters for sector 1, up to 48
+more for sector 2) to the tag with that UID on its next poll, then it is read
+back. A blank tag (factory key) also gets the sector 1 keys derived from its
+UID, as the printer expects; that changes only a factory trailer (access bits
+`FF 07 80`) and keeps its access bits, anything else is refused, a wrong trailer
+locks the sector for good.
+
+[source,yaml]
+----
+api:
+  actions:
+    - action: creality_cfs_write
+      variables:
+        uid: string
+        data: string
+      then:
+        - lambda: id(creality).write(uid, data);
+----
+
+Needs ESP-IDF or Arduino on an ESP32 (AES from mbedtls).

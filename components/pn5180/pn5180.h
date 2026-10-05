@@ -22,6 +22,9 @@ class TagListener {
   // The memory of an ISO 15693 (NFC Forum Type 5) tag was read, from block 0 (CC) up to the size
   // the CC tells; again after every write
   virtual void on_type5_memory(const std::string &uid, const std::vector<uint8_t> &memory) {}
+  // An ISO 14443A tag is selected, on every poll while it stays (`uid_bytes` MSB first, `sak` tells
+  // the kind, 0x08 MIFARE Classic 1K); mifare_authenticate/read/write work only inside this call
+  virtual void on_iso14443a(const std::string &uid, const std::vector<uint8_t> &uid_bytes, uint8_t sak) {}
   // The tag left the field
   virtual void on_tag_removed(const std::string &uid) {}
 };
@@ -53,6 +56,12 @@ class PN5180 : public PollingComponent,
   // listeners get what really is on it. False when the tag is not there or the reader is busy.
   bool write(const std::string &uid, size_t offset, const std::vector<uint8_t> &data);
 
+  // MIFARE Classic access to the selected ISO 14443A tag, only inside TagListener::on_iso14443a.
+  // A failed authentication drops the tag's selection: nothing works after it in that call.
+  bool mifare_authenticate(uint8_t block, const uint8_t *key, bool key_b = false);
+  bool mifare_read(uint8_t block, uint8_t *data);  // 16 bytes
+  bool mifare_write(uint8_t block, const uint8_t *data);
+
  protected:
   bool command_(const std::vector<uint8_t> &tx, uint8_t *rx = nullptr, size_t rx_len = 0);
   bool wait_busy_low_();
@@ -69,14 +78,21 @@ class PN5180 : public PollingComponent,
   bool set_crc_(bool on);
   void poll_type_a_();
   void on_type_a_(const std::vector<uint8_t> *response);
-  void found_tag_(const std::vector<uint8_t> &uid, bool type_a);
-  void no_tag_();
-  bool receive_(std::vector<uint8_t> &response);
+  void found_nfcv_(const std::vector<uint8_t> &uid);
+  void found_nfca_(const std::vector<uint8_t> &uid, uint8_t sak);
+  void lost_nfcv_();
+  void lost_nfca_();
+  void announce_(const std::string &uid);
+  void removed_(const std::string &uid);
+  bool transmit_(const std::vector<uint8_t> &frame, uint8_t valid_bits);
+  bool transceive_now_(const std::vector<uint8_t> &frame, std::vector<uint8_t> &response);
+  bool receive_(std::vector<uint8_t> &response, bool iso15693 = true);
   void on_response_(const std::vector<uint8_t> *response);
   void read_next_();
   void write_next_();
   static void gpio_intr(PN5180 *arg);
-  std::string uid_string_() const;
+  std::string uid_string_() const;    // of the ISO 15693 tag
+  std::string uid_a_string_() const;  // of the ISO 14443A tag
 
   GPIOPin *busy_pin_{nullptr};
   GPIOPin *reset_pin_{nullptr};
@@ -93,13 +109,18 @@ class PN5180 : public PollingComponent,
   uint8_t read_count_{0};     // blocks in the pending read
   bool single_reads_{false};  // the tag failed a multiple block read
 
-  std::vector<uint8_t> uid_;  // as sent over the air: ISO 15693 LSB first, ISO 14443A MSB first
-  bool uid_type_a_{false};
-  bool rf_type_a_{false};  // RF configuration loaded: ISO 14443A, else ISO 15693
+  // One tag of each protocol is tracked, a spool carries an OpenPrintTag and Creality tags
+  std::vector<uint8_t> uid_;    // ISO 15693 tag, LSB first as sent over the air
+  std::vector<uint8_t> uid_a_;  // ISO 14443A tag, MSB first
+  bool mifare_ready_{false};    // inside on_iso14443a
+  // Polls without an answer: two tags close to the antenna detune it, single frames get lost
+  uint8_t nfcv_misses_{0};
+  uint8_t nfca_misses_{0};
+  bool rf_type_a_{false};       // RF configuration loaded: ISO 14443A, else ISO 15693
   TypeAStep type_a_step_{TypeAStep::WUPA};
   uint8_t cascade_1_[5]{};  // UID CL1 + BCC
   uint8_t cascade_2_[4]{};  // UID CL2
-  bool tag_read_{false};
+  bool tag_read_{false};  // the ISO 15693 memory
   uint8_t block_size_{4};
 
   std::vector<TagListener *> listeners_;
