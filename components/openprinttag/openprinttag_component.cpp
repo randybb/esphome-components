@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <iterator>
 
+#include "esphome/core/alloc_helpers.h"
 #include "esphome/core/log.h"
 
 namespace esphome::openprinttag {
