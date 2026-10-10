@@ -6,6 +6,7 @@ from esphome.const import CONF_ID
 
 CODEOWNERS = ["@randybb"]
 DEPENDENCIES = ["pn5180"]
+DOMAIN = "openprinttag"
 MULTI_CONF = True
 
 CONF_OPENPRINTTAG_ID = "openprinttag_id"

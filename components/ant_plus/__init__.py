@@ -47,6 +47,7 @@ from esphome.const import (
 from esphome.core import CORE
 
 CODEOWNERS = ["@randybb"]
+DOMAIN = "ant_plus"
 AUTO_LOAD = ["sensor", "binary_sensor"]
 
 CONF_CADENCE = "cadence"

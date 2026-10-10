@@ -14,6 +14,7 @@ from esphome.const import (
 
 CODEOWNERS = ["@randybb"]
 DEPENDENCIES = ["spi"]
+DOMAIN = "pn5180"
 MULTI_CONF = True
 
 CONF_PN5180_ID = "pn5180_id"

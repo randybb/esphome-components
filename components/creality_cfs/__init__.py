@@ -6,6 +6,7 @@ from esphome.const import CONF_ID
 
 CODEOWNERS = ["@randybb"]
 DEPENDENCIES = ["pn5180"]
+DOMAIN = "creality_cfs"
 MULTI_CONF = True
 
 CONF_CREALITY_CFS_ID = "creality_cfs_id"
