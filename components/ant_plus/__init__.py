@@ -1,7 +1,7 @@
 from pathlib import Path
 
-import esphome.codegen as cg
 from esphome import git
+import esphome.codegen as cg
 from esphome.components import binary_sensor, sensor
 from esphome.components.zephyr import (
     zephyr_add_overlay,
@@ -18,8 +18,8 @@ from esphome.const import (
     CONF_LATITUDE,
     CONF_LONGITUDE,
     CONF_NAME,
-    CONF_SENSOR,
     CONF_POWER,
+    CONF_SENSOR,
     CONF_SPEED,
     CONF_TEMPERATURE,
     CONF_TYPE,
@@ -388,7 +388,9 @@ async def to_code(config):
         )
         cg.add(var.add_device(device))
         if CONF_WHEEL_CIRCUMFERENCE in device_config:
-            cg.add(device.set_wheel_circumference(device_config[CONF_WHEEL_CIRCUMFERENCE]))
+            cg.add(
+                device.set_wheel_circumference(device_config[CONF_WHEEL_CIRCUMFERENCE])
+            )
         for key in SENSORS:
             if sensor_config := device_config.get(key):
                 s = await sensor.new_sensor(sensor_config)

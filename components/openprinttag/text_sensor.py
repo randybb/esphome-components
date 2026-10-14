@@ -5,7 +5,7 @@ from esphome.const import CONF_TYPE
 
 from . import CONF_OPENPRINTTAG_ID, OPENPRINTTAG_CHILD_SCHEMA, FieldSource
 
-# type: (source, key); keys from the OpenPrintTag spec
+# Each type maps to (source, key); keys from the OpenPrintTag spec
 TYPES = {
     "material_type": ("SOURCE_MAIN", 9),
     "material_name": ("SOURCE_MAIN", 10),

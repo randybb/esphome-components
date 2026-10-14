@@ -13,7 +13,7 @@ extern "C" {
 
 namespace esphome::ant_plus {
 
-static const char *const TAG = "ant_plus";
+ESPHOME_LOG_TAG(TAG, "ant_plus");
 
 // No page for this long means the sensor is gone (off, asleep, out of range). Covers
 // five pages of a 0.5 Hz sensor (Tempe).
@@ -411,8 +411,14 @@ void AntPlusTransmitter::next_tracker_page_(uint32_t n, uint8_t *page) {
   // common pages 80 (manufacturer) and 81 (product) every 65 messages
   if (n % 65 == 64) {
     const uint8_t p80[8] = {0x50, 0xFF, 0xFF, 1, 0xFF, 0x00, 1, 0};
-    const uint8_t p81[8] = {0x51, 0xFF, 0xFF, 10, static_cast<uint8_t>(this->ant_id_),
-                            static_cast<uint8_t>(this->ant_id_ >> 8), static_cast<uint8_t>(this->ant_id_ >> 16), 0};
+    const uint8_t p81[8] = {0x51,
+                            0xFF,
+                            0xFF,
+                            10,
+                            static_cast<uint8_t>(this->ant_id_),
+                            static_cast<uint8_t>(this->ant_id_ >> 8),
+                            static_cast<uint8_t>(this->ant_id_ >> 16),
+                            0};
     std::memcpy(page, n % 130 < 65 ? p80 : p81, 8);
     return;
   }
@@ -453,14 +459,8 @@ void AntPlusTransmitter::next_tracker_page_(uint32_t n, uint8_t *page) {
       bearing = static_cast<uint8_t>(lround(fmod(b / RAD + 360.0, 360.0) * 256.0 / 360.0) & 0xFF);
     }
     uint8_t status = 0x04 | (has_position ? 0 : 0x10);
-    const uint8_t p1[8] = {0x01,
-                           index_byte,
-                           static_cast<uint8_t>(distance),
-                           static_cast<uint8_t>(distance >> 8),
-                           bearing,
-                           status,
-                           static_cast<uint8_t>(latitude),
-                           static_cast<uint8_t>(latitude >> 8)};
+    const uint8_t p1[8] = {0x01,    index_byte, static_cast<uint8_t>(distance), static_cast<uint8_t>(distance >> 8),
+                           bearing, status,     static_cast<uint8_t>(latitude), static_cast<uint8_t>(latitude >> 8)};
     std::memcpy(page, p1, 8);
   } else {
     const uint8_t p2[8] = {0x02,

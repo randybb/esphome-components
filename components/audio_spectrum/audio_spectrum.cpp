@@ -10,12 +10,12 @@
 
 namespace esphome::audio_spectrum {
 
-static const char *const TAG = "audio_spectrum";
+ESPHOME_LOG_TAG(TAG, "audio_spectrum");
 
-static constexpr size_t FFT_SIZE = 512;  // after 2x decimation of 48 kHz audio: 47 Hz bins, ~23 FFTs/s
-static constexpr float FLOOR_DB = -60.0f;       // level 0
+static constexpr size_t FFT_SIZE = 512;            // after 2x decimation of 48 kHz audio: 47 Hz bins, ~23 FFTs/s
+static constexpr float FLOOR_DB = -60.0f;          // level 0
 static constexpr float TILT_DB_PER_OCTAVE = 3.0f;  // music has less energy up high, lift it for a flatter look
-static constexpr float RELEASE = 0.88f;         // per-FFT fall-off of the bars
+static constexpr float RELEASE = 0.88f;            // per-FFT fall-off of the bars
 static constexpr uint32_t STALE_MS = 250;
 
 // In-place iterative radix-2 FFT, n must be a power of two

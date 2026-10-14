@@ -7,7 +7,7 @@
 
 namespace esphome::pn5180 {
 
-static const char *const TAG = "pn5180";
+ESPHOME_LOG_TAG(TAG, "pn5180");
 
 // Host commands
 static constexpr uint8_t CMD_WRITE_REGISTER = 0x00;
@@ -86,7 +86,6 @@ static size_t type5_memory_size(const std::vector<uint8_t> &cc) {
   return cc.size() < 8 ? 0 : ((cc[6] << 8) | cc[7]) * 8;  // 8 byte CC: MLEN in bytes 6-7
 }
 
-
 void PN5180::setup() {
   this->spi_setup();
   this->busy_pin_->setup();
@@ -117,9 +116,8 @@ void PN5180::setup() {
     }
     this->irq_active_high_ = irq_config & 0x01;
     this->irq_pin_->setup();
-    this->irq_pin_->attach_interrupt(&PN5180::gpio_intr, this,
-                                     this->irq_active_high_ ? gpio::INTERRUPT_RISING_EDGE
-                                                            : gpio::INTERRUPT_FALLING_EDGE);
+    this->irq_pin_->attach_interrupt(
+        &PN5180::gpio_intr, this, this->irq_active_high_ ? gpio::INTERRUPT_RISING_EDGE : gpio::INTERRUPT_FALLING_EDGE);
   }
 
   if (!this->command_({CMD_LOAD_RF_CONFIG, RF_CONFIG_ISO15693_TX, RF_CONFIG_ISO15693_RX}) || !this->rf_on_()) {
@@ -294,8 +292,9 @@ bool PN5180::set_type_a_(bool type_a) {
   if (this->rf_type_a_ == type_a)
     return true;
   // the transceiver has to be idle for a new RF configuration
-  const bool ok = this->write_register_(CMD_WRITE_REGISTER_AND_MASK, REG_SYSTEM_CONFIG, 0xFFFFFFF8) && (type_a ? this->command_({CMD_LOAD_RF_CONFIG, RF_CONFIG_ISO14443A_TX, RF_CONFIG_ISO14443A_RX})
-                         : this->command_({CMD_LOAD_RF_CONFIG, RF_CONFIG_ISO15693_TX, RF_CONFIG_ISO15693_RX}));
+  const bool ok = this->write_register_(CMD_WRITE_REGISTER_AND_MASK, REG_SYSTEM_CONFIG, 0xFFFFFFF8) &&
+                  (type_a ? this->command_({CMD_LOAD_RF_CONFIG, RF_CONFIG_ISO14443A_TX, RF_CONFIG_ISO14443A_RX})
+                          : this->command_({CMD_LOAD_RF_CONFIG, RF_CONFIG_ISO15693_TX, RF_CONFIG_ISO15693_RX}));
   if (ok)
     this->rf_type_a_ = type_a;
   return ok;
@@ -403,8 +402,7 @@ void PN5180::read_next_() {
 }
 
 bool PN5180::write(const std::string &uid, size_t offset, const std::vector<uint8_t> &data) {
-  if (uid.empty() || uid != this->uid_string_() || !this->tag_read_ ||
-      offset + data.size() > this->memory_.size()) {
+  if (uid.empty() || uid != this->uid_string_() || !this->tag_read_ || offset + data.size() > this->memory_.size()) {
     ESP_LOGW(TAG, "Write: no ISO 15693 tag %s on the reader, or past its memory", uid.c_str());
     return false;
   }

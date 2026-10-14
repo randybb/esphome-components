@@ -174,8 +174,8 @@ bool parse_ndef(std::span<const uint8_t> msg, const uint8_t *mem, OpenPrintTag &
     } else {
       if (pos + 4 > msg.size())
         return false;
-      payload_length = (uint32_t(msg[pos]) << 24) | (uint32_t(msg[pos + 1]) << 16) | (uint32_t(msg[pos + 2]) << 8) |
-                       msg[pos + 3];
+      payload_length =
+          (uint32_t(msg[pos]) << 24) | (uint32_t(msg[pos + 1]) << 16) | (uint32_t(msg[pos + 2]) << 8) | msg[pos + 3];
       pos += 4;
     }
     size_t id_length = 0;

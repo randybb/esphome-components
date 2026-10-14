@@ -15,9 +15,7 @@ from . import audio_spectrum_ns
 
 AUTO_LOAD = ["audio"]
 
-AudioSpectrum = audio_spectrum_ns.class_(
-    "AudioSpectrum", cg.Component, speaker.Speaker
-)
+AudioSpectrum = audio_spectrum_ns.class_("AudioSpectrum", cg.Component, speaker.Speaker)
 
 CONF_BANDS = "bands"
 CONF_MIN_FREQUENCY = "min_frequency"
@@ -87,7 +85,5 @@ async def to_code(config: ConfigType) -> None:
     cg.add(var.set_output_speaker(output))
     cg.add(var.set_bands(config[CONF_BANDS]))
     cg.add(
-        var.set_frequency_range(
-            config[CONF_MIN_FREQUENCY], config[CONF_MAX_FREQUENCY]
-        )
+        var.set_frequency_range(config[CONF_MIN_FREQUENCY], config[CONF_MAX_FREQUENCY])
     )

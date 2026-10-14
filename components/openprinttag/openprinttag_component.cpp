@@ -9,13 +9,13 @@
 
 namespace esphome::openprinttag {
 
-static const char *const TAG = "openprinttag";
+ESPHOME_LOG_TAG(TAG, "openprinttag");
 
 // material_type enum of the spec, indexed by key
 static const char *const MATERIAL_TYPES[] = {
-    "PLA",  "PETG", "TPU", "ABS",  "ASA",  "PC",   "PCTG", "PP",  "PA6",  "PA11", "PA12", "PA66", "CPE",  "TPE", "HIPS",
-    "PHA",  "PET",  "PEI", "PBT",  "PVB",  "PVA",  "PEKK", "PEEK", "BVOH", "TPC", "PPS",  "PPSU", "PVC",  "PEBA", "PVDF",
-    "PPA",  "PCL",  "PES", "PMMA", "POM",  "PPE",  "PS",   "PSU", "TPI",  "SBS",  "OBC",  "EVA",  "PA612",
+    "PLA", "PETG", "TPU", "ABS",  "ASA", "PC",  "PCTG", "PP",   "PA6",  "PA11", "PA12", "PA66", "CPE",   "TPE",  "HIPS",
+    "PHA", "PET",  "PEI", "PBT",  "PVB", "PVA", "PEKK", "PEEK", "BVOH", "TPC",  "PPS",  "PPSU", "PVC",   "PEBA", "PVDF",
+    "PPA", "PCL",  "PES", "PMMA", "POM", "PPE", "PS",   "PSU",  "TPI",  "SBS",  "OBC",  "EVA",  "PA612",
 };
 static constexpr uint32_t KEY_MATERIAL_TYPE = 9;
 static constexpr uint32_t KEY_PRIMARY_COLOR = 19;

@@ -116,11 +116,11 @@ class PN5180 : public PollingComponent,
   // Polls without an answer: two tags close to the antenna detune it, single frames get lost
   uint8_t nfcv_misses_{0};
   uint8_t nfca_misses_{0};
-  bool rf_type_a_{false};       // RF configuration loaded: ISO 14443A, else ISO 15693
+  bool rf_type_a_{false};  // RF configuration loaded: ISO 14443A, else ISO 15693
   TypeAStep type_a_step_{TypeAStep::WUPA};
   uint8_t cascade_1_[5]{};  // UID CL1 + BCC
   uint8_t cascade_2_[4]{};  // UID CL2
-  bool tag_read_{false};  // the ISO 15693 memory
+  bool tag_read_{false};    // the ISO 15693 memory
   uint8_t block_size_{4};
 
   std::vector<TagListener *> listeners_;

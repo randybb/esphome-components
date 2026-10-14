@@ -5,7 +5,7 @@ from esphome.const import CONF_TYPE
 
 from . import CONF_CREALITY_CFS_ID, CREALITY_CFS_CHILD_SCHEMA
 
-# type: (offset, length, is the color) in the record, as DnG-Crafts/K2-RFID lays it out
+# Each type maps to (offset, length, is the color) in the record, as DnG-Crafts/K2-RFID lays it out
 TYPES = {
     "date": (0, 5, False),  # month (1 hex digit), day, year
     "vendor": (5, 4, False),

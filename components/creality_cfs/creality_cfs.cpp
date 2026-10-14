@@ -9,7 +9,7 @@
 
 namespace esphome::creality_cfs {
 
-static const char *const TAG = "creality_cfs";
+ESPHOME_LOG_TAG(TAG, "creality_cfs");
 
 // Keys of the Creality firmware, as published by the community (DnG-Crafts/K2-RFID)
 static const uint8_t KEY_UID[16] = {'q', '3', 'b', 'u', '^', 't', '1', 'n', 'q', 'f', 'Z', '(', 'p', 'f', '$', '1'};
@@ -54,8 +54,7 @@ void CrealityCfsComponent::write(const std::string &uid, const std::string &data
   ESP_LOGD(TAG, "Write to %s queued for its next poll", uid.c_str());
 }
 
-void CrealityCfsComponent::on_iso14443a(const std::string &uid, const std::vector<uint8_t> &uid_bytes,
-                                        uint8_t sak) {
+void CrealityCfsComponent::on_iso14443a(const std::string &uid, const std::vector<uint8_t> &uid_bytes, uint8_t sak) {
   if (uid_bytes.size() != 4 || !is_mifare_classic(sak))
     return;
   if (uid != this->uid_) {
@@ -175,7 +174,9 @@ bool CrealityCfsComponent::write_(bool blank) {
 }
 
 void CrealityCfsComponent::publish_(const std::string &record) {
-  auto field = [&record](Field f) { return record.size() >= f.offset + f.length ? record.substr(f.offset, f.length) : ""; };
+  auto field = [&record](Field f) {
+    return record.size() >= f.offset + f.length ? record.substr(f.offset, f.length) : "";
+  };
 #ifdef USE_SENSOR
   if (this->length_sensor_ != nullptr) {
     const std::string hex = field(FIELD_LENGTH);

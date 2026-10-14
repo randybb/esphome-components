@@ -17,7 +17,7 @@ from . import CONF_OPENPRINTTAG_ID, OPENPRINTTAG_CHILD_SCHEMA, FieldSource
 UNIT_GRAM = "g"
 UNIT_GRAMS_PER_CUBIC_CENTIMETER = "g/cm³"
 
-# type: (source, key, unit, device class, decimals); keys from the OpenPrintTag spec
+# Each type maps to (source, key, unit, device class, decimals); keys from the OpenPrintTag spec
 _WEIGHT = (UNIT_GRAM, DEVICE_CLASS_WEIGHT, 0)
 _TEMPERATURE = (UNIT_CELSIUS, DEVICE_CLASS_TEMPERATURE, 0)
 TYPES = {
@@ -46,7 +46,9 @@ def _schema(config):
         kwargs["device_class"] = device_class
     if config[CONF_TYPE] in ("remaining_weight", "consumed_weight"):
         kwargs["state_class"] = STATE_CLASS_MEASUREMENT
-    return sensor.sensor_schema(**kwargs).extend(OPENPRINTTAG_CHILD_SCHEMA, _TYPE_SCHEMA)(config)
+    return sensor.sensor_schema(**kwargs).extend(
+        OPENPRINTTAG_CHILD_SCHEMA, _TYPE_SCHEMA
+    )(config)
 
 
 _TYPE_SCHEMA = cv.Schema({cv.Required(CONF_TYPE): cv.one_of(*TYPES, lower=True)})

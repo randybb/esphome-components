@@ -57,12 +57,12 @@ class CrealityCfsComponent : public Component, public pn5180::TagListener {
   void publish_(const std::string &record);
 
   pn5180::PN5180 *reader_{nullptr};
-  std::string uid_;           // of the Creality tag on the reader
+  std::string uid_;  // of the Creality tag on the reader
   bool published_{false};
   bool read_done_{false};
-  bool default_key_{false};   // the next authentication uses the factory key (a blank tag)
-  uint8_t key_[6]{};          // derived from the UID
-  std::string pending_uid_;   // a write waiting for its tag
+  bool default_key_{false};  // the next authentication uses the factory key (a blank tag)
+  uint8_t key_[6]{};         // derived from the UID
+  std::string pending_uid_;  // a write waiting for its tag
   std::string pending_data_;
   CallbackManager<void(std::string, std::string)> creality_callback_;
 

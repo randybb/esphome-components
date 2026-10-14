@@ -26,7 +26,9 @@ PN5180 = pn5180_ns.class_("PN5180", cg.PollingComponent, spi.SPIDevice)
 def _irq_pin(value):
     value = pins.internal_gpio_input_pin_schema(value)
     if value.get(CONF_INVERTED):
-        raise cv.Invalid("the IRQ polarity is read from the PN5180 EEPROM, 'inverted' is not supported")
+        raise cv.Invalid(
+            "the IRQ polarity is read from the PN5180 EEPROM, 'inverted' is not supported"
+        )
     return value
 
 
