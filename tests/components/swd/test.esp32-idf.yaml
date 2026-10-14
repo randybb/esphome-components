@@ -1,0 +1,5 @@
+substitutions:
+  swclk_pin: GPIO18
+  swdio_pin: GPIO19
+
+<<: !include common.yaml

@@ -25,3 +25,18 @@ external_components:
 |link:components/stm32_bootloader/[stm32_bootloader] |Flashes an STM32F1/F4 over HTTP through its ROM UART bootloader, BOOT0 and NRST driven by the ESP
 |link:components/swd/[swd] |SWD probe on two GPIOs: SEGGER RTT of a Cortex-M target to the log, target reset, flashing STM32F1/F4 over HTTP
 |===
+
+== Tests
+
+Compile tests in the layout of ESPHome's CI (`tests/components/<component>/common.yaml`
+and `test.<platform>.yaml` on the shared bus packages of `tests/test_build_components/`),
+so a component's tests move to an upstream PR as they are:
+
+[source,sh]
+----
+tests/run.sh                # all components
+tests/run.sh pn5180         # one component
+MODE=config tests/run.sh    # validate only
+----
+
+`ant_plus` has none, it builds only with the zephyr fork.

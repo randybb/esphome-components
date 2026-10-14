@@ -1,0 +1,24 @@
+aixun:
+  model: P2408
+  device_model:
+    name: Model
+  firmware_version:
+    name: Firmware
+  pd_qc_voltage:
+    name: PD+QC voltage
+  pd_qc_current:
+    name: PD+QC current
+  pd_qc_power:
+    name: PD+QC power
+  boot_voltage:
+    name: Boot voltage
+  dc_voltage:
+    name: DC voltage
+  dc_current:
+    name: DC current
+  dc_power:
+    name: DC power
+  dc_output:
+    name: DC output
+  dc_current_limit:
+    name: DC current limit

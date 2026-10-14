@@ -1,0 +1,22 @@
+wifi:
+  ssid: MySSID
+  password: password1
+
+http_request:
+  id: http
+
+swd:
+  id: probe
+  swclk_pin: ${swclk_pin}
+  swdio_pin: ${swdio_pin}
+  http_request_id: http
+
+button:
+  - platform: template
+    name: Reset target
+    on_press:
+      - lambda: id(probe).reset_target();
+  - platform: template
+    name: Flash target
+    on_press:
+      - lambda: id(probe).flash("http://192.168.1.10/target.bin", 0x08010000);

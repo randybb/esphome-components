@@ -1,0 +1,8 @@
+substitutions:
+  boot0_pin: GPIO4
+  reset_pin: GPIO5
+
+packages:
+  uart: !include ../../test_build_components/common/uart/esp32-idf.yaml
+
+<<: !include common.yaml

@@ -1,0 +1,20 @@
+wifi:
+  ssid: MySSID
+  password: password1
+
+http_request:
+
+stm32_bootloader:
+  id: stm32
+  boot0_pin: ${boot0_pin}
+  reset_pin: ${reset_pin}
+
+button:
+  - platform: template
+    name: Flash STM32
+    on_press:
+      - lambda: id(stm32).flash("http://192.168.1.10/firmware.bin", 0x08010000);
+  - platform: template
+    name: Reset STM32
+    on_press:
+      - lambda: id(stm32).reset_target();

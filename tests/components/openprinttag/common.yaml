@@ -1,0 +1,35 @@
+pn5180:
+  id: reader
+  cs_pin: ${cs_pin}
+  busy_pin: ${busy_pin}
+
+openprinttag:
+  id: spool
+  pn5180_id: reader
+  on_openprinttag:
+    - logger.log:
+        format: "OpenPrintTag %s: %s"
+        args: [uid.c_str(), payload.c_str()]
+    - lambda: id(spool).write_aux(uid, "a0");
+
+sensor:
+  - platform: openprinttag
+    type: remaining_weight
+    name: Filament remaining
+  - platform: openprinttag
+    type: consumed_weight
+    name: Filament consumed
+  - platform: openprinttag
+    type: drying_time
+    name: Drying time
+
+text_sensor:
+  - platform: openprinttag
+    type: material_type
+    name: Filament material
+  - platform: openprinttag
+    type: primary_color
+    name: Filament color
+  - platform: openprinttag
+    type: storage_location
+    name: Storage location

@@ -1,0 +1,24 @@
+pn5180:
+  id: reader
+  cs_pin: ${cs_pin}
+  busy_pin: ${busy_pin}
+
+creality_cfs:
+  id: creality
+  on_creality:
+    - logger.log:
+        format: "Creality %s: %s"
+        args: [uid.c_str(), data.c_str()]
+    - lambda: id(creality).write(uid, data);
+
+sensor:
+  - platform: creality_cfs
+    name: Creality length
+
+text_sensor:
+  - platform: creality_cfs
+    type: material_id
+    name: Creality material ID
+  - platform: creality_cfs
+    type: color
+    name: Creality color

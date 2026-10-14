@@ -1,0 +1,18 @@
+speaker:
+  - platform: i2s_audio
+    id: i2s_speaker
+    i2s_dout_pin: ${i2s_dout_pin}
+    dac_type: external
+
+  - platform: audio_spectrum
+    id: spectrum
+    output_speaker: i2s_speaker
+    bands: 16
+    min_frequency: 50Hz
+    max_frequency: 12kHz
+
+sensor:
+  - platform: template
+    name: Lowest band
+    lambda: return id(spectrum).get_level(0);
+    update_interval: 1s
