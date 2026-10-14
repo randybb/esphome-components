@@ -1,5 +1,8 @@
 #pragma once
 
+#include <array>
+#include <bitset>
+#include <initializer_list>
 #include <string>
 #include <vector>
 
@@ -18,20 +21,20 @@ namespace esphome::pn5180 {
 class TagListener {
  public:
   // A new tag is in the field (any kind), `uid` as in on_tag
-  virtual void on_tag(const std::string &uid) {}
+  virtual void on_tag(const char *uid) {}
   // The memory of an ISO 15693 (NFC Forum Type 5) tag was read, from block 0 (CC) up to the size
   // the CC tells; again after every write
-  virtual void on_type5_memory(const std::string &uid, const std::vector<uint8_t> &memory) {}
+  virtual void on_type5_memory(const char *uid, const std::vector<uint8_t> &memory) {}
   // An ISO 14443A tag is selected, on every poll while it stays (`uid_bytes` MSB first, `sak` tells
   // the kind, 0x08 MIFARE Classic 1K); mifare_authenticate/read/write work only inside this call
-  virtual void on_iso14443a(const std::string &uid, const std::vector<uint8_t> &uid_bytes, uint8_t sak) {}
+  virtual void on_iso14443a(const char *uid, const uint8_t *uid_bytes, size_t uid_len, uint8_t sak) {}
   // The tag left the field
-  virtual void on_tag_removed(const std::string &uid) {}
+  virtual void on_tag_removed(const char *uid) {}
 };
 
-class PN5180 : public PollingComponent,
-               public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARITY_LOW, spi::CLOCK_PHASE_LEADING,
-                                     spi::DATA_RATE_4MHZ> {
+class PN5180 final : public PollingComponent,
+                     public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARITY_LOW, spi::CLOCK_PHASE_LEADING,
+                                           spi::DATA_RATE_4MHZ> {
  public:
   void setup() override;
   void update() override;
@@ -54,7 +57,7 @@ class PN5180 : public PollingComponent,
   // Writes `data` at byte `offset` of the memory of the ISO 15693 tag with UID `uid`, as passed to
   // on_type5_memory. Only the blocks that change are written, then the tag is read again, so the
   // listeners get what really is on it. False when the tag is not there or the reader is busy.
-  bool write(const std::string &uid, size_t offset, const std::vector<uint8_t> &data);
+  bool write(const char *uid, size_t offset, const uint8_t *data, size_t len);
 
   // MIFARE Classic access to the selected ISO 14443A tag, only inside TagListener::on_iso14443a.
   // A failed authentication drops the tag's selection: nothing works after it in that call.
@@ -63,7 +66,10 @@ class PN5180 : public PollingComponent,
   bool mifare_write(uint8_t block, const uint8_t *data);
 
  protected:
-  bool command_(const std::vector<uint8_t> &tx, uint8_t *rx = nullptr, size_t rx_len = 0);
+  bool command_(const uint8_t *tx, size_t tx_len, uint8_t *rx = nullptr, size_t rx_len = 0);
+  bool command_(std::initializer_list<uint8_t> tx, uint8_t *rx = nullptr, size_t rx_len = 0) {
+    return this->command_(tx.begin(), tx.size(), rx, rx_len);
+  }
   bool wait_busy_low_();
   bool write_register_(uint8_t cmd, uint8_t reg, uint32_t value);
   bool read_register_(uint8_t reg, uint32_t &value);
@@ -73,26 +79,30 @@ class PN5180 : public PollingComponent,
   enum class State : uint8_t { IDLE, INVENTORY, TYPE_A, READ, WRITE };
   // ISO 14443A activation steps, in State::TYPE_A
   enum class TypeAStep : uint8_t { WUPA, ANTICOLL_1, SELECT_1, ANTICOLL_2, SELECT_2 };
-  void send_(State state, const std::vector<uint8_t> &frame, uint8_t valid_bits = 0, bool expect_response = true);
+  void send_(State state, const uint8_t *frame, size_t len, uint8_t valid_bits = 0, bool expect_response = true);
+  void send_(State state, std::initializer_list<uint8_t> frame, uint8_t valid_bits = 0, bool expect_response = true) {
+    this->send_(state, frame.begin(), frame.size(), valid_bits, expect_response);
+  }
   bool set_type_a_(bool type_a);
   bool set_crc_(bool on);
   void poll_type_a_();
-  void on_type_a_(const std::vector<uint8_t> *response);
-  void found_nfcv_(const std::vector<uint8_t> &uid);
-  void found_nfca_(const std::vector<uint8_t> &uid, uint8_t sak);
+  void on_type_a_(bool ok);
+  void found_nfcv_(const uint8_t *uid);
+  void found_nfca_(const uint8_t *uid, size_t len, uint8_t sak);
   void lost_nfcv_();
   void lost_nfca_();
-  void announce_(const std::string &uid);
-  void removed_(const std::string &uid);
-  bool transmit_(const std::vector<uint8_t> &frame, uint8_t valid_bits);
-  bool transceive_now_(const std::vector<uint8_t> &frame, std::vector<uint8_t> &response);
-  bool receive_(std::vector<uint8_t> &response, bool iso15693 = true);
-  void on_response_(const std::vector<uint8_t> *response);
+  void announce_(const char *uid);
+  void removed_(const char *uid);
+  bool transmit_(const uint8_t *frame, size_t len, uint8_t valid_bits);
+  bool transceive_now_(const uint8_t *frame, size_t len);
+  bool transceive_now_(std::initializer_list<uint8_t> frame) {
+    return this->transceive_now_(frame.begin(), frame.size());
+  }
+  bool receive_(bool iso15693 = true);
+  void on_response_(bool ok);
   void read_next_();
   void write_next_();
   static void gpio_intr(PN5180 *arg);
-  std::string uid_string_() const;    // of the ISO 15693 tag
-  std::string uid_a_string_() const;  // of the ISO 14443A tag
 
   GPIOPin *busy_pin_{nullptr};
   GPIOPin *reset_pin_{nullptr};
@@ -103,16 +113,23 @@ class PN5180 : public PollingComponent,
 #endif
 
   State state_{State::IDLE};
-  std::vector<uint8_t> memory_;   // tag memory read so far, kept for writes
-  std::vector<uint8_t> written_;  // tag memory after the pending writes
-  std::vector<uint8_t> write_blocks_;
-  uint8_t read_count_{0};     // blocks in the pending read
-  bool single_reads_{false};  // the tag failed a multiple block read
+  // The last answer of a tag, filled by receive_()
+  std::array<uint8_t, 260> rx_{};
+  size_t rx_len_{0};
+  std::vector<uint8_t> memory_;    // tag memory read so far, kept for writes; reserved in setup()
+  std::bitset<256> write_blocks_;  // blocks still to write
+  uint8_t write_block_{0};         // the one being written
+  uint8_t read_count_{0};          // blocks in the pending read
+  bool single_reads_{false};       // the tag failed a multiple block read
 
   // One tag of each protocol is tracked, a spool carries an OpenPrintTag and Creality tags
-  std::vector<uint8_t> uid_;    // ISO 15693 tag, LSB first as sent over the air
-  std::vector<uint8_t> uid_a_;  // ISO 14443A tag, MSB first
-  bool mifare_ready_{false};    // inside on_iso14443a
+  std::array<uint8_t, 8> uid_{};  // ISO 15693 tag, LSB first as sent over the air
+  bool has_uid_{false};
+  std::array<uint8_t, 7> uid_a_{};  // ISO 14443A tag, MSB first
+  uint8_t uid_a_len_{0};
+  char uid_str_[24]{};  // as passed to the listeners, "E0-04-..."
+  char uid_a_str_[21]{};
+  bool mifare_ready_{false};  // inside on_iso14443a
   // Polls without an answer: two tags close to the antenna detune it, single frames get lost
   uint8_t nfcv_misses_{0};
   uint8_t nfca_misses_{0};

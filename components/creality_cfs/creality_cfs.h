@@ -48,8 +48,8 @@ class CrealityCfsComponent : public Component, public pn5180::TagListener {
   // the tag with UID `uid` on its next poll; a blank tag gets its keys derived from the UID
   void write(const std::string &uid, const std::string &data);
 
-  void on_iso14443a(const std::string &uid, const std::vector<uint8_t> &uid_bytes, uint8_t sak) override;
-  void on_tag_removed(const std::string &uid) override;
+  void on_iso14443a(const char *uid, const uint8_t *uid_bytes, size_t uid_len, uint8_t sak) override;
+  void on_tag_removed(const char *uid) override;
 
  protected:
   bool read_(bool blank, std::string &record);

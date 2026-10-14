@@ -92,12 +92,12 @@ A component decoding tags implements `pn5180::TagListener` and registers with
 
 * `on_tag(uid)`: a new tag of any kind
 * `on_type5_memory(uid, memory)`: the memory of an ISO 15693 tag, again after every write
-* `on_iso14443a(uid, uid_bytes, sak)`: an ISO 14443A tag is selected, on every poll;
+* `on_iso14443a(uid, uid_bytes, uid_len, sak)`: an ISO 14443A tag is selected, on every poll;
   `mifare_authenticate()`, `mifare_read()` and `mifare_write()` (MIFARE Classic
   blocks) work inside this call
 * `on_tag_removed(uid)`
 
-`write(uid, offset, data)` writes bytes at an offset of that memory; only the
+`write(uid, offset, data, len)` writes bytes at an offset of that memory; only the
 blocks that change are written, then the tag is read again, so the listeners get
 what really is on it.
 

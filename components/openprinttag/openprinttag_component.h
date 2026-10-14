@@ -53,9 +53,9 @@ class OpenPrintTagComponent : public Component, public pn5180::TagListener {
   // then the tag is read again
   void write_aux(const std::string &uid, const std::string &data_hex);
 
-  void on_tag(const std::string &uid) override;
-  void on_type5_memory(const std::string &uid, const std::vector<uint8_t> &memory) override;
-  void on_tag_removed(const std::string &uid) override;
+  void on_tag(const char *uid) override;
+  void on_type5_memory(const char *uid, const std::vector<uint8_t> &memory) override;
+  void on_tag_removed(const char *uid) override;
 
  protected:
   void clear_();

@@ -54,11 +54,11 @@ void CrealityCfsComponent::write(const std::string &uid, const std::string &data
   ESP_LOGD(TAG, "Write to %s queued for its next poll", uid.c_str());
 }
 
-void CrealityCfsComponent::on_iso14443a(const std::string &uid, const std::vector<uint8_t> &uid_bytes, uint8_t sak) {
-  if (uid_bytes.size() != 4 || !is_mifare_classic(sak))
+void CrealityCfsComponent::on_iso14443a(const char *uid, const uint8_t *uid_bytes, size_t uid_len, uint8_t sak) {
+  if (uid_len != 4 || !is_mifare_classic(sak))
     return;
   if (uid != this->uid_) {
-    this->on_tag_removed(this->uid_);
+    this->on_tag_removed(this->uid_.c_str());
     this->uid_ = uid;
     this->read_done_ = false;
     this->default_key_ = false;
@@ -81,7 +81,7 @@ void CrealityCfsComponent::on_iso14443a(const std::string &uid, const std::vecto
   }
   if (pending) {
     const bool ok = this->write_(blank);
-    ESP_LOGI(TAG, "Write to %s %s", uid.c_str(), ok ? "done" : "failed");
+    ESP_LOGI(TAG, "Write to %s %s", uid, ok ? "done" : "failed");
     this->pending_uid_.clear();
     this->pending_data_.clear();
     this->read_done_ = false;
@@ -94,24 +94,25 @@ void CrealityCfsComponent::on_iso14443a(const std::string &uid, const std::vecto
     return;
   this->read_done_ = true;
   if (record.empty()) {
-    ESP_LOGD(TAG, "Blank or foreign MIFARE Classic tag %s", uid.c_str());
+    ESP_LOGD(TAG, "Blank or foreign MIFARE Classic tag %s", uid);
     return;
   }
-  ESP_LOGD(TAG, "Creality tag %s: %s", uid.c_str(), record.c_str());
+  ESP_LOGD(TAG, "Creality tag %s: %s", uid, record.c_str());
   this->published_ = true;
   this->publish_(record);
   this->creality_callback_.call(uid, record);
 }
 
-void CrealityCfsComponent::on_tag_removed(const std::string &uid) {
-  if (uid.empty() || uid != this->uid_)
+void CrealityCfsComponent::on_tag_removed(const char *uid) {
+  if (this->uid_.empty() || this->uid_ != uid)
     return;
+  const std::string removed = std::move(this->uid_);  // `uid` may point into uid_
   this->uid_.clear();
   this->read_done_ = false;
   if (this->published_) {
     this->published_ = false;
     this->publish_("");
-    this->creality_callback_.call(uid, "");
+    this->creality_callback_.call(removed, "");
   }
 }
 

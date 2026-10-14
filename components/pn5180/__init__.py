@@ -48,7 +48,7 @@ CONFIG_SCHEMA = (
 )
 
 FINAL_VALIDATE_SCHEMA = spi.final_validate_device_schema(
-    "pn5180", require_miso=True, require_mosi=True
+    DOMAIN, require_miso=True, require_mosi=True
 )
 
 PN5180_CHILD_SCHEMA = cv.Schema({cv.GenerateID(CONF_PN5180_ID): cv.use_id(PN5180)})

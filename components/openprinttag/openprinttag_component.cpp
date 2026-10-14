@@ -26,27 +26,27 @@ static constexpr uint32_t KEY_AUX_CONSUMED_WEIGHT = 0;
 
 void OpenPrintTagComponent::dump_config() { ESP_LOGCONFIG(TAG, "OpenPrintTag"); }
 
-void OpenPrintTagComponent::on_tag(const std::string &uid) {
+void OpenPrintTagComponent::on_tag(const char *uid) {
   if (!this->uid_.empty() && uid != this->uid_)
     this->clear_();  // another tag replaced the OpenPrintTag
 }
 
-void OpenPrintTagComponent::on_type5_memory(const std::string &uid, const std::vector<uint8_t> &memory) {
+void OpenPrintTagComponent::on_type5_memory(const char *uid, const std::vector<uint8_t> &memory) {
   OpenPrintTag tag;
   if (!parse_openprinttag(memory, tag)) {
-    ESP_LOGD(TAG, "Tag %s holds no OpenPrintTag record", uid.c_str());
+    ESP_LOGD(TAG, "Tag %s holds no OpenPrintTag record", uid);
     if (uid == this->uid_)
       this->clear_();
     return;
   }
-  ESP_LOGD(TAG, "OpenPrintTag %s: %zu main, %zu aux fields", uid.c_str(), tag.main.size(), tag.aux.size());
+  ESP_LOGD(TAG, "OpenPrintTag %s: %zu main, %zu aux fields", uid, tag.main.size(), tag.aux.size());
   this->uid_ = uid;
   this->memory_ = memory;
   this->publish_(&tag);
   this->openprinttag_callback_.call(uid, format_hex(tag.payload.data(), tag.payload.size()));
 }
 
-void OpenPrintTagComponent::on_tag_removed(const std::string &uid) {
+void OpenPrintTagComponent::on_tag_removed(const char *uid) {
   if (uid == this->uid_)
     this->clear_();
 }
@@ -71,7 +71,7 @@ void OpenPrintTagComponent::write_aux(const std::string &uid, const std::string 
     return;
   }
   // Bytes after the new data stay, readers ignore them
-  this->reader_->write(uid, tag.payload_offset + tag.aux_offset, data);
+  this->reader_->write(uid.c_str(), tag.payload_offset + tag.aux_offset, data.data(), data.size());
 }
 
 void OpenPrintTagComponent::publish_(const OpenPrintTag *tag) {
