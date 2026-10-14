@@ -1,0 +1,74 @@
+= aixun
+
+Aixun (JCID) devices on their text console, 115200 Bd. On the USB port they
+emulate an FTDI FT232 (`0403:6001`), so an ESP32-S3 reads them as a USB host
+through `usb_uart`; a plain `uart` works too.
+
+* Any model: model and firmware version (`JC_version`), no `model` needed.
+* `model: P2408` power supply: voltage, current and power of the PD+QC, Boot
+and DC outputs, DC output on/off, DC current limit.
+
+== Configuration
+
+[source,yaml]
+----
+external_components:
+  - source: github://randybb/esphome-components
+    components: [aixun]
+
+usb_host:
+
+usb_uart:
+  - type: FT232
+    channels:
+      - id: p2408_uart
+        baud_rate: 115200
+        buffer_size: 4096   # the status arrives at ~100 Hz
+
+aixun:
+  model: P2408
+  uart_id: p2408_uart
+  device_model: {name: Model}
+  firmware_version: {name: Firmware}
+  pd_qc_voltage: {name: PD+QC voltage}
+  pd_qc_current: {name: PD+QC current}
+  pd_qc_power: {name: PD+QC power}
+  boot_voltage: {name: Boot voltage}
+  boot_current: {name: Boot current}
+  boot_power: {name: Boot power}
+  dc_voltage: {name: DC voltage}
+  dc_current: {name: DC current}
+  dc_power: {name: DC power}
+  dc_output: {name: DC output}
+  dc_current_limit: {name: DC current limit}
+----
+
+[cols="1,1,3",options="header"]
+|===
+|Option |Default |Description
+|`model` |- |`P2408` for its entities below, leave out for other devices
+|`uart_id` |required |`uart` or `usb_uart` channel of the device
+|`device_model` |- |Text sensor, the reply of `JC_version` before `_version` (e.g. `JC_M_P2408`, `JC_H310D`)
+|`firmware_version` |- |Text sensor, the reply after `_version` (e.g. `1.27`)
+|`update_interval` |`1s` |How often the sensors are published, the latest status line is used
+|`pd_qc_*`, `boot_*`, `dc_*` |- |`_voltage`, `_current`, `_power` sensors of the output (power = V × I)
+|`dc_output` |- |Switch of the DC output
+|`dc_current_limit` |- |Number, DC current limit 0-8 A
+|===
+
+The version is asked every 2 s until it arrives, and again after the USB
+device is replugged. The reply has no line end, it is taken as complete after
+50 ms of silence or when a P2408 status line follows it.
+
+== P2408 notes
+
+* PD+QC are the USB-A and USB-C ports, Boot is the USB-A port with the boot
+adapter, DC the banana jacks.
+* The `out` flags in the status line do not follow the real outputs, so
+`dc_output` is an assumed state switch. It does not touch the output when the
+ESP boots (`restore_mode: DISABLED`).
+* The limits are set together (`JC_Set:DCx.xxx,BATTx.xxx`), the Boot one is
+sent back as last read. The number shows the limit the supply reports back.
+* PD+QC cannot be switched and the voltage cannot be set over USB.
+* The sensors are unknown while the device is off or unplugged; the component
+reopens the status stream when it stops for 2 s.
