@@ -1,0 +1,110 @@
+= swd
+
+SWD probe bit-banged on two GPIOs. Connects to an ARM Cortex-M target (written
+for an STM32F103), finds the SEGGER RTT control block in its RAM and prints
+up-buffer 0 to the log (tag `rtt`), line by line. The target keeps running,
+its memory is read in the background.
+
+When the target goes away or resets, the probe reconnects and looks RTT up
+again. If the target has not set up RTT yet, the RAM is scanned again every 5 s.
+
+== Configuration
+
+[source,yaml]
+----
+external_components:
+  - source: github://randybb/esphome-components
+    components: [swd]
+
+swd:
+  id: probe
+  swclk_pin: GPIO18
+  swdio_pin: GPIO19
+
+button:
+  - platform: template
+    name: Reset target
+    on_press:
+      - lambda: id(probe).reset_target();
+----
+
+[cols="1,1,3",options="header"]
+|===
+|Option |Default |Description
+|`swclk_pin` |required |SWCLK
+|`swdio_pin` |required |SWDIO, switched between output and input with a pull-up
+|`ram_start` |`0x20000000` |Start of the RAM scanned for the RTT control block
+|`ram_size` |`0x5000` |Size of that RAM, 20 kB fits the STM32F103C8
+|`clock_delay` |`1us` |Half period of SWCLK; raise it for long wires
+|`http_request_id` | |`http_request` component, enables `flash()`
+|===
+
+Wire GND as well. NRST is not needed.
+
+== From lambdas
+
+* `id(probe).reset_target()` resets the target (AIRCR SYSRESETREQ).
+* `id(probe).read_word(addr, &value)` and `id(probe).write_word(addr, value)`
+access the target's memory, both return `false` on failure.
+* `id(probe).flash(url, address)` flashes the target, see below.
+
+== Flashing
+
+With `http_request_id` set, `flash(url, address)` downloads a raw binary and
+writes it to the target's flash, then resets the target. It blocks until done,
+like HTTP OTA. Supported are the STM32F1 (bank 1) and STM32F4 (first 1 MB)
+families, detected from `DBGMCU_IDCODE`.
+
+[source,yaml]
+----
+http_request:
+  id: http
+
+swd:
+  id: probe
+  swclk_pin: GPIO18
+  swdio_pin: GPIO19
+  http_request_id: http
+
+button:
+  - platform: template
+    name: Flash target
+    on_press:
+      - lambda: id(probe).flash("http://192.168.1.10/target.bin", 0x08010000);
+----
+
+* The target is reset and halted on its reset vector first, so its firmware
+neither runs nor touches clocks or the SWD pins.
+* `address` (default `0x08000000`) must start a flash page (F1) or sector (F4).
+The pages/sectors are erased as the image arrives, the rest of the flash is
+left alone.
+* Every 1 kB chunk is read back and compared.
+* If the download fails halfway, the target is left with a partial image. Run
+`flash()` again.
+
+For a target on the zephyr fork with MCUboot, flash the signed application
+image to the start of `slot0_partition`, not the whole flash.
+
+== Target side (zephyr fork)
+
+The `debug:` component makes the logger print through `printk` to RTT up-buffer 0.
+It sets `SEGGER_RTT_MODE_BLOCK_IF_FIFO_FULL`, so the target may slow down
+when nobody reads RTT.
+
+On larger RAM, set `ram_size` to cover where the control block lives, e.g.
+`0x20000` for an STM32F411. A full scan of 128 kB takes several seconds, the
+probe does it in small steps from `loop()`.
+
+== Notes
+
+* On connect, the probe sets `DBGMCU_CR` so the debug port stays alive while an
+STM32 sleeps. On other targets that write fails harmlessly.
+* If the target firmware remaps PA13/PA14 (`SWJ_CFG`), SWD is gone until a
+reset, and without NRST the probe cannot connect under reset.
+
+== TODO
+
+* RTT down-buffer and more channels, exposed as a `uart`. Waits for a `uart`
+on the zephyr fork, otherwise there is nothing to talk to on the target.
+* Read the RTT control block address from the target's ELF (`_SEGGER_RTT`)
+instead of scanning.
