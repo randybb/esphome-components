@@ -298,6 +298,7 @@ nfc::NfcTag PN5180::nfca_tag_() const {
 }
 
 void PN5180::announce_(const char *uid, nfc::NfcTag tag) {
+  ESP_LOGI(TAG, "Tag %s (%s)", uid, tag.get_tag_type().c_str());
   if (!this->tag_callback_.empty())
     this->tag_callback_.call(std::string(uid), tag);
   for (auto *listener : this->listeners_)
@@ -313,6 +314,7 @@ void PN5180::announce_(const char *uid, nfc::NfcTag tag) {
 }
 
 void PN5180::removed_(const char *uid, nfc::NfcTag tag) {
+  ESP_LOGI(TAG, "Tag %s removed", uid);
   if (!this->tag_removed_callback_.empty())
     this->tag_removed_callback_.call(std::string(uid), tag);
   for (auto *listener : this->listeners_)
