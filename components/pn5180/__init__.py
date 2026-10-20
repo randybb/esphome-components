@@ -1,6 +1,6 @@
 from esphome import automation, pins
 import esphome.codegen as cg
-from esphome.components import spi
+from esphome.components import nfc, spi
 import esphome.config_validation as cv
 from esphome.const import (
     CONF_BUSY_PIN,
@@ -12,6 +12,7 @@ from esphome.const import (
     CONF_RESET_PIN,
 )
 
+AUTO_LOAD = ["nfc"]
 CODEOWNERS = ["@randybb"]
 DEPENDENCIES = ["spi"]
 DOMAIN = "pn5180"
@@ -20,7 +21,7 @@ MULTI_CONF = True
 CONF_PN5180_ID = "pn5180_id"
 
 pn5180_ns = cg.esphome_ns.namespace("pn5180")
-PN5180 = pn5180_ns.class_("PN5180", cg.PollingComponent, spi.SPIDevice)
+PN5180 = pn5180_ns.class_("PN5180", cg.PollingComponent, spi.SPIDevice, nfc.Nfcc)
 
 
 def _irq_pin(value):
@@ -53,21 +54,21 @@ FINAL_VALIDATE_SCHEMA = spi.final_validate_device_schema(
 
 PN5180_CHILD_SCHEMA = cv.Schema({cv.GenerateID(CONF_PN5180_ID): cv.use_id(PN5180)})
 
+_TAG_ARGS = [(cg.std_string, "x"), (nfc.NfcTagConstRef, "tag")]
+
+_CALLBACK_AUTOMATIONS = (
+    automation.CallbackAutomation(CONF_ON_TAG, "add_on_tag_callback", _TAG_ARGS),
+    automation.CallbackAutomation(
+        CONF_ON_TAG_REMOVED, "add_on_tag_removed_callback", _TAG_ARGS
+    ),
+)
+
 
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
     await spi.register_spi_device(var, config)
-    cg.add(var.set_busy_pin(await cg.gpio_pin_expression(config[CONF_BUSY_PIN])))
-    if CONF_RESET_PIN in config:
-        cg.add(var.set_reset_pin(await cg.gpio_pin_expression(config[CONF_RESET_PIN])))
-    if CONF_IRQ_PIN in config:
-        cg.add(var.set_irq_pin(await cg.gpio_pin_expression(config[CONF_IRQ_PIN])))
-    for conf in config.get(CONF_ON_TAG, []):
-        await automation.build_callback_automation(
-            var, "add_on_tag_callback", [(cg.std_string, "x")], conf
-        )
-    for conf in config.get(CONF_ON_TAG_REMOVED, []):
-        await automation.build_callback_automation(
-            var, "add_on_tag_removed_callback", [(cg.std_string, "x")], conf
-        )
+    await cg.add_pin(var.set_busy_pin, config[CONF_BUSY_PIN])
+    await cg.add_pin(var.set_reset_pin, config.get(CONF_RESET_PIN))
+    await cg.add_pin(var.set_irq_pin, config.get(CONF_IRQ_PIN))
+    await automation.build_callback_automations(var, config, _CALLBACK_AUTOMATIONS)

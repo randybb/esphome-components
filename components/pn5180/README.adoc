@@ -10,8 +10,8 @@ link:../openprinttag/[openprinttag] for OpenPrintTag filament spool tags,
 link:../creality_cfs/[creality_cfs] for Creality CFS tags (MIFARE Classic).
 
 Every `update_interval` the reader runs an ISO 15693 inventory, then an
-ISO 14443A activation (WUPA, anticollision, select, HALT); 4 and 7 byte UIDs,
-which is what NTAG and MIFARE have. One tag of each protocol is tracked, so a
+ISO 14443A activation (WUPA, anticollision, select, HALT) with 4, 7 and 10 byte
+UIDs. One tag of each protocol is tracked, so a
 spool with an OpenPrintTag and a Creality tag shows both. A tag counts as
 removed after 3 polls without an answer: two tags close to the antenna detune
 it and single frames get lost.
@@ -78,12 +78,24 @@ text_sensor:
 |`irq_pin` | |IRQ, wakes the loop when a tag answered; polarity is read from the chip's EEPROM
 |`update_interval` |`1s` |How often the field is polled for a tag
 |`data_rate` |`4MHz` |SPI clock, the chip takes up to 7 MHz
-|`on_tag` | |New tag in the field, `x` is the UID (`E0-04-...` for ISO 15693 as printed on the tag, `04-A2-...` for ISO 14443A)
-|`on_tag_removed` | |Tag left the field, `x` is its UID
+|`on_tag` | |New tag in the field, `x` is the UID (`E0-04-...` for ISO 15693 as printed on the tag, `04-A2-...` for ISO 14443A), `tag` the `nfc::NfcTag` (`tag.get_tag_type()` is `ISO 15693` or `ISO 14443A`)
+|`on_tag_removed` | |Tag left the field, `x` and `tag` as in `on_tag`
 |===
 
 `text_sensor` with `platform: pn5180`: the UID of the tag on the reader, empty
 without one.
+
+The reader is an NFC controller of ESPHome's `nfc` component, so its
+`binary_sensor` tells whether a given tag is on the reader:
+
+[source,yaml]
+----
+binary_sensor:
+  - platform: nfc
+    nfcc_id: reader
+    name: Spool tag
+    uid: E0-04-01-08-66-2E-A5-12
+----
 
 == For decoding components
 

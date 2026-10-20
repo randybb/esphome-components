@@ -6,8 +6,8 @@ pn5180:
   irq_pin: ${irq_pin}
   on_tag:
     - logger.log:
-        format: "Tag %s"
-        args: [x.c_str()]
+        format: "Tag %s, %s"
+        args: [x.c_str(), tag.get_tag_type().c_str()]
   on_tag_removed:
     - logger.log:
         format: "Tag %s removed"
@@ -16,3 +16,9 @@ pn5180:
 text_sensor:
   - platform: pn5180
     name: Tag UID
+
+binary_sensor:
+  - platform: nfc
+    nfcc_id: reader
+    name: Spool tag
+    uid: E0-04-01-08-66-2E-A5-12

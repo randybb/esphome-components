@@ -49,11 +49,10 @@ static constexpr uint8_t RF_CONFIG_ISO15693_RX = 0x8D;
 static constexpr uint8_t RF_CONFIG_ISO14443A_TX = 0x00;
 static constexpr uint8_t RF_CONFIG_ISO14443A_RX = 0x80;
 static constexpr uint8_t ISO14443A_WUPA = 0x52;  // wakes HALTed tags too, so a tag stays seen
-static constexpr uint8_t ISO14443A_SEL_CL1 = 0x93;
-static constexpr uint8_t ISO14443A_SEL_CL2 = 0x95;
+static constexpr uint8_t ISO14443A_SEL[] = {0x93, 0x95, 0x97};  // CL1 to CL3
 static constexpr uint8_t ISO14443A_NVB_ANTICOLL = 0x20;
 static constexpr uint8_t ISO14443A_NVB_SELECT = 0x70;
-static constexpr uint8_t ISO14443A_CASCADE_TAG = 0x88;
+static constexpr uint8_t ISO14443A_SAK_CASCADE = 0x04;  // UID not complete
 static constexpr uint8_t ISO14443A_HLTA = 0x50;
 static constexpr uint8_t MIFARE_AUTH_A = 0x60;
 static constexpr uint8_t MIFARE_AUTH_B = 0x61;
@@ -241,7 +240,7 @@ void PN5180::found_nfcv_(const uint8_t *uid) {
     this->has_uid_ = true;
     this->tag_read_ = false;
     uid_hex(this->uid_str_, this->uid_.data(), this->uid_.size(), true);
-    this->announce_(this->uid_str_);
+    this->announce_(this->uid_str_, this->nfcv_tag_());
   }
   if (this->tag_read_) {
     this->poll_type_a_();
@@ -258,7 +257,7 @@ void PN5180::found_nfca_(const uint8_t *uid, size_t len, uint8_t sak) {
     std::copy(uid, uid + len, this->uid_a_.begin());
     this->uid_a_len_ = len;
     uid_hex(this->uid_a_str_, uid, len, false);
-    this->announce_(this->uid_a_str_);
+    this->announce_(this->uid_a_str_, this->nfca_tag_());
   }
   // The tag stays selected while the listeners read or write it
   this->mifare_ready_ = true;
@@ -273,34 +272,55 @@ void PN5180::found_nfca_(const uint8_t *uid, size_t len, uint8_t sak) {
 void PN5180::lost_nfcv_() {
   if (!this->has_uid_)
     return;
+  auto tag = this->nfcv_tag_();
   this->has_uid_ = false;
   this->memory_.clear();
-  this->removed_(this->uid_str_);
+  this->removed_(this->uid_str_, std::move(tag));
   this->uid_str_[0] = '\0';
 }
 
 void PN5180::lost_nfca_() {
   if (this->uid_a_len_ == 0)
     return;
+  auto tag = this->nfca_tag_();
   this->uid_a_len_ = 0;
-  this->removed_(this->uid_a_str_);
+  this->removed_(this->uid_a_str_, std::move(tag));
   this->uid_a_str_[0] = '\0';
 }
 
-void PN5180::announce_(const char *uid) {
-  this->tag_callback_.call(uid);
+// The tags as the nfc component sees them, the UID bytes in the order of the UID string
+nfc::NfcTag PN5180::nfcv_tag_() const {
+  return nfc::NfcTag(nfc::NfcTagUid(this->uid_.rbegin(), this->uid_.rend()), "ISO 15693");
+}
+
+nfc::NfcTag PN5180::nfca_tag_() const {
+  return nfc::NfcTag(nfc::NfcTagUid(this->uid_a_.begin(), this->uid_a_.begin() + this->uid_a_len_), "ISO 14443A");
+}
+
+void PN5180::announce_(const char *uid, nfc::NfcTag tag) {
+  if (!this->tag_callback_.empty())
+    this->tag_callback_.call(std::string(uid), tag);
   for (auto *listener : this->listeners_)
     listener->on_tag(uid);
+#ifdef NFC_TAG_LISTENER_COUNT
+  for (auto *listener : this->tag_listeners_)
+    listener->tag_on(tag);
+#endif
 #ifdef USE_TEXT_SENSOR
   if (this->uid_text_sensor_ != nullptr)
     this->uid_text_sensor_->publish_state(uid);
 #endif
 }
 
-void PN5180::removed_(const char *uid) {
-  this->tag_removed_callback_.call(uid);
+void PN5180::removed_(const char *uid, nfc::NfcTag tag) {
+  if (!this->tag_removed_callback_.empty())
+    this->tag_removed_callback_.call(std::string(uid), tag);
   for (auto *listener : this->listeners_)
     listener->on_tag_removed(uid);
+#ifdef NFC_TAG_LISTENER_COUNT
+  for (auto *listener : this->tag_listeners_)
+    listener->tag_off(tag);
+#endif
 #ifdef USE_TEXT_SENSOR
   // the other tag, if one is still there
   if (this->uid_text_sensor_ != nullptr)
@@ -341,7 +361,8 @@ void PN5180::poll_type_a_() {
     this->lost_nfca_();
 }
 
-// ponytail: single and double size UIDs (4, 7 bytes), triple size (10 bytes, rare) is not selected
+// 4, 7 and 10 byte UIDs: anticollision and select on CL1, then CL2 and CL3 while the SAK says the
+// UID goes on
 void PN5180::on_type_a_(bool ok) {
   const auto step = this->type_a_step_;
   if (step == TypeAStep::WUPA) {
@@ -351,8 +372,10 @@ void PN5180::on_type_a_(bool ok) {
       return;
     }
     this->nfca_misses_ = 0;
-    this->type_a_step_ = TypeAStep::ANTICOLL_1;
-    this->send_(State::TYPE_A, {ISO14443A_SEL_CL1, ISO14443A_NVB_ANTICOLL});
+    this->cascade_level_ = 0;
+    this->scan_uid_len_ = 0;
+    this->type_a_step_ = TypeAStep::ANTICOLL;
+    this->send_(State::TYPE_A, {ISO14443A_SEL[0], ISO14443A_NVB_ANTICOLL});
     return;
   }
   // A tag answered the WUPA: a failure later is retried on the next poll, not a removal
@@ -360,43 +383,35 @@ void PN5180::on_type_a_(bool ok) {
     return;
 
   const auto &r = this->rx_;
-  if (step == TypeAStep::ANTICOLL_1 || step == TypeAStep::ANTICOLL_2) {
+  const uint8_t sel = ISO14443A_SEL[this->cascade_level_];
+  if (step == TypeAStep::ANTICOLL) {
     if (this->rx_len_ != 5 || (r[0] ^ r[1] ^ r[2] ^ r[3]) != r[4])  // UID part + BCC
       return;
-    const bool first = step == TypeAStep::ANTICOLL_1;
-    if (first) {
-      std::copy(r.begin(), r.begin() + 5, this->cascade_1_);
-    } else {
-      std::copy(r.begin(), r.begin() + 4, this->cascade_2_);
-    }
-    const uint8_t select[] = {
-        first ? ISO14443A_SEL_CL1 : ISO14443A_SEL_CL2, ISO14443A_NVB_SELECT, r[0], r[1], r[2], r[3], r[4]};
-    this->type_a_step_ = first ? TypeAStep::SELECT_1 : TypeAStep::SELECT_2;
+    std::copy(r.begin(), r.begin() + 5, this->cascade_);
+    const uint8_t select[] = {sel, ISO14443A_NVB_SELECT, r[0], r[1], r[2], r[3], r[4]};
+    this->type_a_step_ = TypeAStep::SELECT;
     if (this->set_crc_(true))
       this->send_(State::TYPE_A, select, sizeof(select));
     return;
   }
 
-  // SAK
-  if (step == TypeAStep::SELECT_1 && this->cascade_1_[0] == ISO14443A_CASCADE_TAG) {
-    this->type_a_step_ = TypeAStep::ANTICOLL_2;
+  // SAK; while the UID goes on, this level's part starts with the cascade tag
+  const uint8_t sak = r[0];
+  const bool more = sak & ISO14443A_SAK_CASCADE;
+  const uint8_t *part = this->cascade_ + (more ? 1 : 0);
+  const uint8_t *end = this->cascade_ + 4;
+  std::copy(part, end, this->scan_uid_.begin() + this->scan_uid_len_);
+  this->scan_uid_len_ += end - part;
+  if (more) {
+    if (++this->cascade_level_ >= std::size(ISO14443A_SEL))
+      return;
+    this->type_a_step_ = TypeAStep::ANTICOLL;
     if (this->set_crc_(false))
-      this->send_(State::TYPE_A, {ISO14443A_SEL_CL2, ISO14443A_NVB_ANTICOLL});
+      this->send_(State::TYPE_A, {ISO14443A_SEL[this->cascade_level_], ISO14443A_NVB_ANTICOLL});
     return;
   }
-  uint8_t uid[7];
-  size_t len;
-  if (step == TypeAStep::SELECT_1) {
-    std::copy(this->cascade_1_, this->cascade_1_ + 4, uid);
-    len = 4;
-  } else {
-    std::copy(this->cascade_1_ + 1, this->cascade_1_ + 4, uid);  // CL1 starts with the cascade tag
-    std::copy(this->cascade_2_, this->cascade_2_ + 4, uid + 3);
-    len = 7;
-  }
-  const uint8_t sak = r[0];
   ESP_LOGV(TAG, "ISO 14443A tag, SAK 0x%02X", sak);
-  this->found_nfca_(uid, len, sak);
+  this->found_nfca_(this->scan_uid_.data(), this->scan_uid_len_, sak);
 }
 
 void PN5180::read_next_() {

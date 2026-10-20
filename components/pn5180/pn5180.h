@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "esphome/components/nfc/nfc.h"
 #include "esphome/components/spi/spi.h"
 #include "esphome/core/component.h"
 #include "esphome/core/hal.h"
@@ -34,7 +35,8 @@ class TagListener {
 
 class PN5180 final : public PollingComponent,
                      public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARITY_LOW, spi::CLOCK_PHASE_LEADING,
-                                           spi::DATA_RATE_4MHZ> {
+                                           spi::DATA_RATE_4MHZ>,
+                     public nfc::Nfcc {
  public:
   void setup() override;
   void update() override;
@@ -78,7 +80,7 @@ class PN5180 final : public PollingComponent,
 
   enum class State : uint8_t { IDLE, INVENTORY, TYPE_A, READ, WRITE };
   // ISO 14443A activation steps, in State::TYPE_A
-  enum class TypeAStep : uint8_t { WUPA, ANTICOLL_1, SELECT_1, ANTICOLL_2, SELECT_2 };
+  enum class TypeAStep : uint8_t { WUPA, ANTICOLL, SELECT };
   void send_(State state, const uint8_t *frame, size_t len, uint8_t valid_bits = 0, bool expect_response = true);
   void send_(State state, std::initializer_list<uint8_t> frame, uint8_t valid_bits = 0, bool expect_response = true) {
     this->send_(state, frame.begin(), frame.size(), valid_bits, expect_response);
@@ -91,8 +93,10 @@ class PN5180 final : public PollingComponent,
   void found_nfca_(const uint8_t *uid, size_t len, uint8_t sak);
   void lost_nfcv_();
   void lost_nfca_();
-  void announce_(const char *uid);
-  void removed_(const char *uid);
+  nfc::NfcTag nfcv_tag_() const;
+  nfc::NfcTag nfca_tag_() const;
+  void announce_(const char *uid, nfc::NfcTag tag);
+  void removed_(const char *uid, nfc::NfcTag tag);
   bool transmit_(const uint8_t *frame, size_t len, uint8_t valid_bits);
   bool transceive_now_(const uint8_t *frame, size_t len);
   bool transceive_now_(std::initializer_list<uint8_t> frame) {
@@ -125,24 +129,26 @@ class PN5180 final : public PollingComponent,
   // One tag of each protocol is tracked, a spool carries an OpenPrintTag and Creality tags
   std::array<uint8_t, 8> uid_{};  // ISO 15693 tag, LSB first as sent over the air
   bool has_uid_{false};
-  std::array<uint8_t, 7> uid_a_{};  // ISO 14443A tag, MSB first
+  std::array<uint8_t, nfc::NFC_UID_MAX_LENGTH> uid_a_{};  // ISO 14443A tag, MSB first
   uint8_t uid_a_len_{0};
   char uid_str_[24]{};  // as passed to the listeners, "E0-04-..."
-  char uid_a_str_[21]{};
+  char uid_a_str_[nfc::FORMAT_UID_BUFFER_SIZE]{};
   bool mifare_ready_{false};  // inside on_iso14443a
   // Polls without an answer: two tags close to the antenna detune it, single frames get lost
   uint8_t nfcv_misses_{0};
   uint8_t nfca_misses_{0};
   bool rf_type_a_{false};  // RF configuration loaded: ISO 14443A, else ISO 15693
   TypeAStep type_a_step_{TypeAStep::WUPA};
-  uint8_t cascade_1_[5]{};  // UID CL1 + BCC
-  uint8_t cascade_2_[4]{};  // UID CL2
+  uint8_t cascade_level_{0};                                // 0 to 2: CL1 to CL3
+  uint8_t cascade_[5]{};                                    // UID part + BCC of the current level
+  std::array<uint8_t, nfc::NFC_UID_MAX_LENGTH> scan_uid_{};  // UID so far, without the cascade tags
+  uint8_t scan_uid_len_{0};
   bool tag_read_{false};    // the ISO 15693 memory
   uint8_t block_size_{4};
 
   std::vector<TagListener *> listeners_;
-  CallbackManager<void(std::string)> tag_callback_;
-  CallbackManager<void(std::string)> tag_removed_callback_;
+  LazyCallbackManager<void(const std::string &, const nfc::NfcTag &)> tag_callback_;
+  LazyCallbackManager<void(const std::string &, const nfc::NfcTag &)> tag_removed_callback_;
 };
 
 }  // namespace esphome::pn5180
