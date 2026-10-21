@@ -26,21 +26,34 @@ usb_uart:
         buffer_size: 4096   # the status arrives at ~100 Hz
 
 aixun:
+  id: supply
   model: P2408
   uart_id: p2408_uart
-  device_model: {name: Model}
-  firmware_version: {name: Firmware}
-  pd_qc_voltage: {name: PD+QC voltage}
-  pd_qc_current: {name: PD+QC current}
-  pd_qc_power: {name: PD+QC power}
-  boot_voltage: {name: Boot voltage}
-  boot_current: {name: Boot current}
-  boot_power: {name: Boot power}
-  dc_voltage: {name: DC voltage}
-  dc_current: {name: DC current}
-  dc_power: {name: DC power}
-  dc_output: {name: DC output}
-  dc_current_limit: {name: DC current limit}
+
+text_sensor:
+  - platform: aixun
+    device_model: {name: Model}
+    firmware_version: {name: Firmware}
+
+sensor:
+  - platform: aixun
+    pd_qc_voltage: {name: PD+QC voltage}
+    pd_qc_current: {name: PD+QC current}
+    pd_qc_power: {name: PD+QC power}
+    boot_voltage: {name: Boot voltage}
+    boot_current: {name: Boot current}
+    boot_power: {name: Boot power}
+    dc_voltage: {name: DC voltage}
+    dc_current: {name: DC current}
+    dc_power: {name: DC power}
+
+switch:
+  - platform: aixun
+    dc_output: {name: DC output}
+
+number:
+  - platform: aixun
+    dc_current_limit: {name: DC current limit}
 ----
 
 [cols="1,1,3",options="header"]
@@ -48,12 +61,20 @@ aixun:
 |Option |Default |Description
 |`model` |- |`P2408` for its entities below, leave out for other devices
 |`uart_id` |required |`uart` or `usb_uart` channel of the device
-|`device_model` |- |Text sensor, the reply of `JC_version` before `_version` (e.g. `JC_M_P2408`, `JC_H310D`)
-|`firmware_version` |- |Text sensor, the reply after `_version` (e.g. `1.27`)
 |`update_interval` |`1s` |How often the sensors are published, the latest status line is used
-|`pd_qc_*`, `boot_*`, `dc_*` |- |`_voltage`, `_current`, `_power` sensors of the output (power = V × I)
-|`dc_output` |- |Switch of the DC output
-|`dc_current_limit` |- |Number, DC current limit 0-8 A
+|===
+
+The entities are platforms of `text_sensor`, `sensor`, `switch` and `number`
+(`aixun_id` picks the hub when there are several):
+
+[cols="1,1,3",options="header"]
+|===
+|Platform |Option |Description
+|`text_sensor` |`device_model` |The reply of `JC_version` before `_version` (e.g. `JC_M_P2408`, `JC_H310D`)
+|`text_sensor` |`firmware_version` |The reply after `_version` (e.g. `1.27`)
+|`sensor` |`pd_qc_*`, `boot_*`, `dc_*` |`_voltage`, `_current`, `_power` of the output (power = V × I), P2408
+|`switch` |`dc_output` |The DC output, P2408
+|`number` |`dc_current_limit` |DC current limit 0-8 A, P2408
 |===
 
 The version is asked every 2 s until it arrives, and again after the USB
