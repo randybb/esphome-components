@@ -1,4 +1,5 @@
 #include "ant_plus.h"
+#include "esphome/core/application.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
@@ -536,8 +537,8 @@ void AntPlus::setup() {
   if (err == 0)
     err = antr_network_address_set(NETWORK, this->network_key_.data());
   if (err != 0) {
-    ESP_LOGE(TAG, "ANT setup failed: 0x%02X", err);
-    this->mark_failed();
+    ESP_LOGE(TAG, "ANT error 0x%02X", err);
+    this->mark_failed(LOG_STR("ANT setup failed"));
     return;
   }
   for (uint8_t channel = 0; channel < this->devices_.size(); channel++) {
@@ -553,8 +554,8 @@ void AntPlus::setup() {
     if (err == 0)
       err = antr_channel_radio_freq_set(channel, ANT_PLUS_FREQ);
     if (err != 0 || !this->open_channel_(channel)) {
-      ESP_LOGE(TAG, "Channel %u setup failed: 0x%02X", channel, err);
-      this->mark_failed();
+      ESP_LOGE(TAG, "Channel %u, ANT error 0x%02X", channel, err);
+      this->mark_failed(LOG_STR("ANT channel setup failed"));
       return;
     }
   }
@@ -628,7 +629,7 @@ bool AntPlus::open_channel_(uint8_t channel) {
 }
 
 void AntPlus::loop() {
-  uint32_t now = millis();
+  const uint32_t now = App.get_loop_component_start_time();
   uint8_t tail = this->tail_.load(std::memory_order_relaxed);
   while (tail != this->head_.load(std::memory_order_acquire)) {
     const Message &msg = this->queue_[tail % QUEUE_SIZE];

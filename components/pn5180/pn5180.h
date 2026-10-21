@@ -50,7 +50,9 @@ class PN5180 final : public PollingComponent,
   void set_uid_text_sensor(text_sensor::TextSensor *sensor) { this->uid_text_sensor_ = sensor; }
 #endif
 
+#ifdef PN5180_LISTENER_COUNT
   void add_listener(TagListener *listener) { this->listeners_.push_back(listener); }
+#endif
   template<typename F> void add_on_tag_callback(F &&callback) { this->tag_callback_.add(std::forward<F>(callback)); }
   template<typename F> void add_on_tag_removed_callback(F &&callback) {
     this->tag_removed_callback_.add(std::forward<F>(callback));
@@ -139,14 +141,16 @@ class PN5180 final : public PollingComponent,
   uint8_t nfca_misses_{0};
   bool rf_type_a_{false};  // RF configuration loaded: ISO 14443A, else ISO 15693
   TypeAStep type_a_step_{TypeAStep::WUPA};
-  uint8_t cascade_level_{0};                                // 0 to 2: CL1 to CL3
-  uint8_t cascade_[5]{};                                    // UID part + BCC of the current level
+  uint8_t cascade_level_{0};                                 // 0 to 2: CL1 to CL3
+  uint8_t cascade_[5]{};                                     // UID part + BCC of the current level
   std::array<uint8_t, nfc::NFC_UID_MAX_LENGTH> scan_uid_{};  // UID so far, without the cascade tags
   uint8_t scan_uid_len_{0};
-  bool tag_read_{false};    // the ISO 15693 memory
+  bool tag_read_{false};  // the ISO 15693 memory
   uint8_t block_size_{4};
 
-  std::vector<TagListener *> listeners_;
+#ifdef PN5180_LISTENER_COUNT
+  StaticVector<TagListener *, PN5180_LISTENER_COUNT> listeners_;  // sized by pn5180.register_listener()
+#endif
   LazyCallbackManager<void(const std::string &, const nfc::NfcTag &)> tag_callback_;
   LazyCallbackManager<void(const std::string &, const nfc::NfcTag &)> tag_removed_callback_;
 };

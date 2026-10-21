@@ -64,7 +64,7 @@ class OpenPrintTagComponent : public Component, public pn5180::TagListener {
   pn5180::PN5180 *reader_{nullptr};
   std::string uid_;              // of the OpenPrintTag on the reader, empty without one
   std::vector<uint8_t> memory_;  // its memory, for writes
-  CallbackManager<void(std::string, std::string)> openprinttag_callback_;
+  LazyCallbackManager<void(std::string, std::string)> openprinttag_callback_;
 
 #ifdef USE_SENSOR
   struct SensorField {

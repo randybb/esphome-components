@@ -121,9 +121,8 @@ bool STM32Bootloader::enter_() {
   delay(10);
   this->reset_->digital_write(true);
   delay(100);  // ROM bootloader start-up
+  this->discard_available();
   uint8_t b;
-  while (this->available())
-    this->read_byte(&b);
 
   // The bootloader detects the baud rate from 0x7F; NACK means it is synced already
   for (uint8_t i = 0; i < 3; i++) {
@@ -141,9 +140,7 @@ void STM32Bootloader::leave_() {
   this->parent_->set_parity(this->parity_);
   this->parent_->load_settings(false);
   delay(10);
-  uint8_t b;
-  while (this->available())
-    this->read_byte(&b);
+  this->discard_available();
 }
 
 bool STM32Bootloader::get_() {

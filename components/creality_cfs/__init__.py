@@ -1,5 +1,6 @@
 from esphome import automation
 import esphome.codegen as cg
+from esphome.components import pn5180
 from esphome.components.pn5180 import CONF_PN5180_ID, PN5180
 import esphome.config_validation as cv
 from esphome.const import CONF_ID
@@ -31,7 +32,7 @@ CREALITY_CFS_CHILD_SCHEMA = cv.Schema(
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
-    cg.add(var.set_reader(await cg.get_variable(config[CONF_PN5180_ID])))
+    await pn5180.register_listener(config, var)
     for conf in config.get(CONF_ON_CREALITY, []):
         await automation.build_callback_automation(
             var,

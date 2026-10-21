@@ -3,6 +3,7 @@ import esphome.codegen as cg
 from esphome.components import http_request
 import esphome.config_validation as cv
 from esphome.const import CONF_ID
+from esphome.types import ConfigType
 
 CODEOWNERS = ["@randybb"]
 DOMAIN = "swd"
@@ -34,15 +35,12 @@ CONFIG_SCHEMA = cv.Schema(
 ).extend(cv.COMPONENT_SCHEMA)
 
 
-async def to_code(config):
+async def to_code(config: ConfigType) -> None:
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
-    cg.add(var.set_swclk_pin(await cg.gpio_pin_expression(config[CONF_SWCLK_PIN])))
-    cg.add(var.set_swdio_pin(await cg.gpio_pin_expression(config[CONF_SWDIO_PIN])))
+    await cg.add_pin(var.set_swclk_pin, config[CONF_SWCLK_PIN])
+    await cg.add_pin(var.set_swdio_pin, config[CONF_SWDIO_PIN])
     cg.add(var.set_ram(config[CONF_RAM_START], config[CONF_RAM_SIZE]))
     cg.add(var.set_clock_delay(config[CONF_CLOCK_DELAY].total_microseconds))
-    if CONF_HTTP_REQUEST_ID in config:
+    if await cg.add_variable(var.set_http_request, config.get(CONF_HTTP_REQUEST_ID)):
         cg.add_define("USE_SWD_FLASH")
-        cg.add(
-            var.set_http_request(await cg.get_variable(config[CONF_HTTP_REQUEST_ID]))
-        )

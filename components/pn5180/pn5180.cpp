@@ -48,7 +48,7 @@ static constexpr uint8_t RF_CONFIG_ISO15693_RX = 0x8D;
 // ISO 14443A, 106 kbps
 static constexpr uint8_t RF_CONFIG_ISO14443A_TX = 0x00;
 static constexpr uint8_t RF_CONFIG_ISO14443A_RX = 0x80;
-static constexpr uint8_t ISO14443A_WUPA = 0x52;  // wakes HALTed tags too, so a tag stays seen
+static constexpr uint8_t ISO14443A_WUPA = 0x52;                 // wakes HALTed tags too, so a tag stays seen
 static constexpr uint8_t ISO14443A_SEL[] = {0x93, 0x95, 0x97};  // CL1 to CL3
 static constexpr uint8_t ISO14443A_NVB_ANTICOLL = 0x20;
 static constexpr uint8_t ISO14443A_NVB_SELECT = 0x70;
@@ -116,8 +116,7 @@ void PN5180::setup() {
   uint8_t fw[2];
   if (!this->command_({CMD_READ_EEPROM, EEPROM_FIRMWARE_VERSION, sizeof(fw)}, fw, sizeof(fw)) ||
       (fw[0] == fw[1] && (fw[0] == 0x00 || fw[0] == 0xFF))) {
-    ESP_LOGE(TAG, "No response, check SPI, BUSY and the 5 V supply");
-    this->mark_failed();
+    this->mark_failed(LOG_STR("No response, check SPI, BUSY and the 5 V supply"));
     return;
   }
   ESP_LOGCONFIG(TAG, "Firmware %u.%u", fw[1], fw[0]);
@@ -126,7 +125,7 @@ void PN5180::setup() {
     uint8_t irq_config;
     if (!this->command_({CMD_READ_EEPROM, EEPROM_IRQ_PIN_CONFIG, 1}, &irq_config, 1) ||
         !this->write_register_(CMD_WRITE_REGISTER, REG_IRQ_ENABLE, IRQ_RX | IRQ_GENERAL_ERROR)) {
-      this->mark_failed();
+      this->mark_failed(LOG_STR(ESP_LOG_MSG_COMM_FAIL));
       return;
     }
     this->irq_active_high_ = irq_config & 0x01;
@@ -136,8 +135,7 @@ void PN5180::setup() {
   }
 
   if (!this->command_({CMD_LOAD_RF_CONFIG, RF_CONFIG_ISO15693_TX, RF_CONFIG_ISO15693_RX}) || !this->rf_on_()) {
-    ESP_LOGE(TAG, "RF field did not turn on");
-    this->mark_failed();
+    this->mark_failed(LOG_STR("RF field did not turn on"));
   }
   this->disable_loop();  // runs only while waiting for a tag to answer
 }
@@ -150,8 +148,6 @@ void PN5180::dump_config() {
   LOG_PIN("  Reset Pin: ", this->reset_pin_);
   LOG_PIN("  IRQ Pin: ", this->irq_pin_);
   LOG_UPDATE_INTERVAL(this);
-  if (this->is_failed())
-    ESP_LOGE(TAG, "  Setup failed");
 }
 
 // Each poll: an ISO 15693 inventory (e.g. OpenPrintTag, its memory read when new), then an
@@ -261,8 +257,10 @@ void PN5180::found_nfca_(const uint8_t *uid, size_t len, uint8_t sak) {
   }
   // The tag stays selected while the listeners read or write it
   this->mifare_ready_ = true;
+#ifdef PN5180_LISTENER_COUNT
   for (auto *listener : this->listeners_)
     listener->on_iso14443a(this->uid_a_str_, this->uid_a_.data(), this->uid_a_len_, sak);
+#endif
   this->mifare_ready_ = false;
   // HALT it, the WUPA of the next poll wakes it again
   this->send_(State::IDLE, {ISO14443A_HLTA, 0x00}, 0, false);
@@ -301,8 +299,10 @@ void PN5180::announce_(const char *uid, nfc::NfcTag tag) {
   ESP_LOGI(TAG, "Tag %s (%s)", uid, tag.get_tag_type().c_str());
   if (!this->tag_callback_.empty())
     this->tag_callback_.call(std::string(uid), tag);
+#ifdef PN5180_LISTENER_COUNT
   for (auto *listener : this->listeners_)
     listener->on_tag(uid);
+#endif
 #ifdef NFC_TAG_LISTENER_COUNT
   for (auto *listener : this->tag_listeners_)
     listener->tag_on(tag);
@@ -317,8 +317,10 @@ void PN5180::removed_(const char *uid, nfc::NfcTag tag) {
   ESP_LOGI(TAG, "Tag %s removed", uid);
   if (!this->tag_removed_callback_.empty())
     this->tag_removed_callback_.call(std::string(uid), tag);
+#ifdef PN5180_LISTENER_COUNT
   for (auto *listener : this->listeners_)
     listener->on_tag_removed(uid);
+#endif
 #ifdef NFC_TAG_LISTENER_COUNT
   for (auto *listener : this->tag_listeners_)
     listener->tag_off(tag);
@@ -426,8 +428,10 @@ void PN5180::read_next_() {
   const size_t block = this->memory_.size() / std::max<size_t>(this->block_size_, 1);
   if (this->memory_.size() >= size || block > 0xFF) {
     this->tag_read_ = true;
+#ifdef PN5180_LISTENER_COUNT
     for (auto *listener : this->listeners_)
       listener->on_type5_memory(this->uid_str_, this->memory_);
+#endif
     this->poll_type_a_();
     return;
   }

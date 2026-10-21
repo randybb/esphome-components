@@ -12,11 +12,12 @@ namespace esphome::creality_cfs {
 ESPHOME_LOG_TAG(TAG, "creality_cfs");
 
 // Keys of the Creality firmware, as published by the community (DnG-Crafts/K2-RFID)
-static const uint8_t KEY_UID[16] = {'q', '3', 'b', 'u', '^', 't', '1', 'n', 'q', 'f', 'Z', '(', 'p', 'f', '$', '1'};
-static const uint8_t KEY_DATA[16] = {'H', '@', 'C', 'F', 'k', 'R', 'n', 'z', '@', 'K', 'A', 't', 'B', 'J', 'p', '2'};
-static const uint8_t KEY_FACTORY[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+static constexpr uint8_t KEY_UID[16] = {'q', '3', 'b', 'u', '^', 't', '1', 'n', 'q', 'f', 'Z', '(', 'p', 'f', '$', '1'};
+static constexpr uint8_t KEY_DATA[16] = {'H', '@', 'C', 'F', 'k', 'R', 'n', 'z',
+                                         '@', 'K', 'A', 't', 'B', 'J', 'p', '2'};
+static constexpr uint8_t KEY_FACTORY[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 // Access bits of a factory sector trailer (bytes 6-8)
-static const uint8_t ACCESS_FACTORY[3] = {0xFF, 0x07, 0x80};
+static constexpr uint8_t ACCESS_FACTORY[3] = {0xFF, 0x07, 0x80};
 
 static constexpr uint8_t SECTOR_1_BLOCK = 4;  // blocks 4-6, AES encrypted
 static constexpr uint8_t SECTOR_1_TRAILER = 7;

@@ -64,7 +64,7 @@ class CrealityCfsComponent : public Component, public pn5180::TagListener {
   uint8_t key_[6]{};         // derived from the UID
   std::string pending_uid_;  // a write waiting for its tag
   std::string pending_data_;
-  CallbackManager<void(std::string, std::string)> creality_callback_;
+  LazyCallbackManager<void(std::string, std::string)> creality_callback_;
 
 #ifdef USE_SENSOR
   sensor::Sensor *length_sensor_{nullptr};

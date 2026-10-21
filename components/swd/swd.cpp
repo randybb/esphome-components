@@ -98,13 +98,13 @@ void SWD::dump_config() {
 void SWD::loop() {
   switch (this->state_) {
     case State::DISCONNECTED:
-      if (int32_t(millis() - this->next_try_ms_) < 0)
+      if (int32_t(App.get_loop_component_start_time() - this->next_try_ms_) < 0)
         return;
       if (!this->connect_()) {
         if (!this->warned_)
           ESP_LOGW(TAG, "No target");
         this->warned_ = true;
-        this->next_try_ms_ = millis() + 1000;
+        this->next_try_ms_ = App.get_loop_component_start_time() + 1000;
         return;
       }
       this->warned_ = false;
@@ -113,7 +113,7 @@ void SWD::loop() {
       this->state_ = State::SCANNING;
       return;
     case State::SCANNING:
-      if (int32_t(millis() - this->next_try_ms_) >= 0 && !this->scan_())
+      if (int32_t(App.get_loop_component_start_time() - this->next_try_ms_) >= 0 && !this->scan_())
         this->disconnect_(1000);
       return;
     case State::RTT:

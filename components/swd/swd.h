@@ -23,7 +23,6 @@ class SWD : public Component {
   void setup() override;
   void loop() override;
   void dump_config() override;
-  float get_setup_priority() const override { return setup_priority::DATA; }
 
   void set_swclk_pin(InternalGPIOPin *pin) { this->swclk_ = pin; }
   void set_swdio_pin(InternalGPIOPin *pin) { this->swdio_ = pin; }

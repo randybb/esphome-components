@@ -20,7 +20,6 @@ class AudioSpectrum : public Component, public speaker::Speaker {
   void setup() override;
   void loop() override;
   void dump_config() override;
-  float get_setup_priority() const override { return setup_priority::DATA; }
 
   void set_output_speaker(speaker::Speaker *output) { this->output_ = output; }
   void set_bands(uint8_t bands) { this->bands_ = bands; }

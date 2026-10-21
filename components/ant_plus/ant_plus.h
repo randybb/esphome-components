@@ -166,7 +166,6 @@ class AntPlus : public Component {
   void setup() override;
   void loop() override;
   void dump_config() override;
-  float get_setup_priority() const override { return setup_priority::DATA; }
 
   void set_network_key(const std::vector<uint8_t> &key) { std::copy_n(key.begin(), 8, this->network_key_.begin()); }
   void add_device(AntPlusDevice *device) { this->devices_.push_back(device); }

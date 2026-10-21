@@ -4,13 +4,13 @@ from esphome.components import nfc, spi
 import esphome.config_validation as cv
 from esphome.const import (
     CONF_BUSY_PIN,
-    CONF_ID,
     CONF_INVERTED,
     CONF_IRQ_PIN,
     CONF_ON_TAG,
     CONF_ON_TAG_REMOVED,
     CONF_RESET_PIN,
 )
+from esphome.types import ConfigType
 
 AUTO_LOAD = ["nfc"]
 CODEOWNERS = ["@randybb"]
@@ -54,6 +54,16 @@ FINAL_VALIDATE_SCHEMA = spi.final_validate_device_schema(
 
 PN5180_CHILD_SCHEMA = cv.Schema({cv.GenerateID(CONF_PN5180_ID): cv.use_id(PN5180)})
 
+_request_listener_slot = cg.slot_counter("PN5180_LISTENER_COUNT")
+
+
+async def register_listener(config: ConfigType, var: cg.MockObj) -> None:
+    """Connect a decoding component (a TagListener) to the reader in its PN5180_CHILD_SCHEMA config."""
+    reader = await cg.get_variable(config[CONF_PN5180_ID])
+    _request_listener_slot(str(reader))
+    cg.add(var.set_reader(reader))
+
+
 _TAG_ARGS = [(cg.std_string, "x"), (nfc.NfcTagConstRef, "tag")]
 
 _CALLBACK_AUTOMATIONS = (
@@ -64,10 +74,8 @@ _CALLBACK_AUTOMATIONS = (
 )
 
 
-async def to_code(config):
-    var = cg.new_Pvariable(config[CONF_ID])
-    await cg.register_component(var, config)
-    await spi.register_spi_device(var, config)
+async def to_code(config: ConfigType) -> None:
+    var = await spi.new_spi_component(config)
     await cg.add_pin(var.set_busy_pin, config[CONF_BUSY_PIN])
     await cg.add_pin(var.set_reset_pin, config.get(CONF_RESET_PIN))
     await cg.add_pin(var.set_irq_pin, config.get(CONF_IRQ_PIN))

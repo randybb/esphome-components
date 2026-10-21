@@ -2,7 +2,8 @@ from esphome import pins
 import esphome.codegen as cg
 from esphome.components import http_request, uart
 import esphome.config_validation as cv
-from esphome.const import CONF_ID, CONF_RESET_PIN
+from esphome.const import CONF_RESET_PIN
+from esphome.types import ConfigType
 
 CODEOWNERS = ["@randybb"]
 DEPENDENCIES = ["uart", "http_request"]
@@ -32,10 +33,8 @@ CONFIG_SCHEMA = (
 )
 
 
-async def to_code(config):
-    var = cg.new_Pvariable(config[CONF_ID])
-    await cg.register_component(var, config)
-    await uart.register_uart_device(var, config)
-    cg.add(var.set_boot0_pin(await cg.gpio_pin_expression(config[CONF_BOOT0_PIN])))
-    cg.add(var.set_reset_pin(await cg.gpio_pin_expression(config[CONF_RESET_PIN])))
-    cg.add(var.set_http_request(await cg.get_variable(config[CONF_HTTP_REQUEST_ID])))
+async def to_code(config: ConfigType) -> None:
+    var = await uart.new_uart_component(config)
+    await cg.add_pin(var.set_boot0_pin, config[CONF_BOOT0_PIN])
+    await cg.add_pin(var.set_reset_pin, config[CONF_RESET_PIN])
+    await cg.add_variable(var.set_http_request, config[CONF_HTTP_REQUEST_ID])
