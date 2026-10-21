@@ -99,8 +99,9 @@ binary_sensor:
 
 == For decoding components
 
-A component decoding tags implements `pn5180::TagListener` and registers with
-`add_listener()`:
+A component decoding tags implements `pn5180::TagListener` and has a `set_reader()`
+that calls `add_listener()`; its `to_code` calls `await pn5180.register_listener(config, var)`
+(the listener list is sized at build time):
 
 * `on_tag(uid)`: a new tag of any kind
 * `on_type5_memory(uid, memory)`: the memory of an ISO 15693 tag, again after every write
