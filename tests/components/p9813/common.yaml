@@ -1,0 +1,32 @@
+p9813:
+  id: p9813_hub
+  data_pin: ${data_pin}
+  clock_pin: ${clock_pin}
+  num_chips: 2
+
+output:
+  - platform: p9813
+    id: led_0
+    channel: 0
+  - platform: p9813
+    id: led_1
+    channel: 1
+  - platform: p9813
+    id: led_2
+    channel: 2
+  - platform: p9813
+    id: led_3
+    channel: 3
+
+light:
+  - platform: monochromatic
+    name: LED 0
+    output: led_0
+  - platform: monochromatic
+    name: LED 1
+    output: led_1
+  - platform: rgb
+    name: RGB
+    red: led_2
+    green: led_3
+    blue: led_0

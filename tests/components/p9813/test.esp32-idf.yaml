@@ -1,0 +1,5 @@
+substitutions:
+  data_pin: GPIO18
+  clock_pin: GPIO19
+
+<<: !include common.yaml

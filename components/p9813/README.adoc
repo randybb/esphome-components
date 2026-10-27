@@ -1,0 +1,46 @@
+= p9813
+
+P9813 RGB LED drivers (Grove Chainable RGB LED and similar modules) as plain
+outputs: each of the 3 channels of every chip in the chain is a separate
+`output`. A module cut into pieces then drives single-color LEDs, every one
+its own `monochromatic` light, or any 3 channels make an `rgb` light.
+
+For a whole RGB strip, `fastled_spi` / `neopixelbus` with `chipset: P9813` stay
+the better fit.
+
+== Configuration
+
+[source,yaml]
+----
+external_components:
+  - source: github://randybb/esphome-components
+    components: [p9813]
+
+p9813:
+  data_pin: GPIO18
+  clock_pin: GPIO19
+  num_chips: 2
+
+output:
+  - platform: p9813
+    id: led_0
+    channel: 0
+
+light:
+  - platform: monochromatic
+    name: LED 0
+    output: led_0
+----
+
+[cols="1,1,3",options="header"]
+|===
+|Option |Default |Description
+|`data_pin` |required |DIN of the first chip
+|`clock_pin` |required |CIN of the first chip
+|`num_chips` |`1` |Chips in the chain
+|===
+
+Output `channel`: `chip * 3` plus 0 for R, 1 for G, 2 for B, the chip next to
+the ESP is chip 0. `p9813_id` picks the chain when there are more of them.
+Resolution is 8 bits. The P9813 drives constant current, so single LEDs need no
+series resistor.
