@@ -3,12 +3,9 @@ from pathlib import Path
 from esphome import git
 import esphome.codegen as cg
 from esphome.components import binary_sensor, sensor
-from esphome.components.zephyr import (
-    zephyr_add_overlay,
-    zephyr_add_prj_conf,
-    zephyr_set_module_override,
-)
-from esphome.components.zephyr.variants import ZephyrModule
+from esphome.components.zephyr import zephyr_add_overlay, zephyr_add_prj_conf
+from esphome.components.zephyr_rtos import zephyr_set_module_override
+from esphome.components.zephyr_rtos.variants import ZephyrModule
 import esphome.config_validation as cv
 from esphome.const import (
     CONF_BATTERY_LEVEL,
@@ -33,7 +30,7 @@ from esphome.const import (
     DEVICE_CLASS_VOLTAGE,
     ENTITY_CATEGORY_DIAGNOSTIC,
     ICON_HEART_PULSE,
-    PLATFORM_ZEPHYR,
+    PLATFORM_NRF,
     STATE_CLASS_MEASUREMENT,
     STATE_CLASS_TOTAL_INCREASING,
     UNIT_BEATS_PER_MINUTE,
@@ -315,7 +312,7 @@ CONFIG_SCHEMA = cv.All(
         }
     ).extend(cv.COMPONENT_SCHEMA),
     _channel_count,
-    cv.only_on([PLATFORM_ZEPHYR]),
+    cv.only_on([PLATFORM_NRF]),
 )
 
 SENSORS = (

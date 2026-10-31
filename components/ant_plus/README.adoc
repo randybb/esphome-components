@@ -2,7 +2,7 @@
 
 ANT+ sensors received on the chip's own radio, for nRF52840 on the
 https://github.com/esphomeplatformzephyr/esphome[esphomeplatformzephyr] fork
-(`zephyr:` platform, `framework: type: ncs`).
+(`nrf:` platform, `framework: type: ncs`).
 
 The ANT link layer is https://github.com/winedarksea/RadiANT[RadiANT], a
 clean-room ANT+ compatible implementation (Apache-2.0), fetched at build time.
@@ -15,7 +15,7 @@ Each configured device gets its own ANT channel (up to 31).
 
 [source,yaml]
 ----
-zephyr:
+nrf:
   variant: NRF52
   board: nrf52840dk/nrf52840
   framework:
