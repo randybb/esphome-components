@@ -1,9 +1,12 @@
 aixun:
-  id: supply
-  model: P2408
+  - id: supply
+    model: P2408
+  - id: station
+    model: H310D
 
 sensor:
   - platform: aixun
+    aixun_id: supply
     pd_qc_voltage:
       name: PD+QC voltage
     pd_qc_current:
@@ -18,20 +21,63 @@ sensor:
       name: DC current
     dc_power:
       name: DC power
+  - platform: aixun
+    aixun_id: station
+    current_temperature:
+      name: Temperature
+    current_fan_speed:
+      name: Fan
+    heating_power:
+      name: Heating power
 
 text_sensor:
   - platform: aixun
+    aixun_id: supply
     device_model:
       name: Model
     firmware_version:
       name: Firmware
+  - platform: aixun
+    aixun_id: station
+    device_model:
+      name: Station model
+    serial_number:
+      name: Station serial
+    heater_status:
+      name: Station status
 
 switch:
   - platform: aixun
+    aixun_id: supply
     dc_output:
       name: DC output
 
 number:
   - platform: aixun
+    aixun_id: supply
     dc_current_limit:
       name: DC current limit
+  - platform: aixun
+    aixun_id: station
+    target_temperature:
+      name: Target temperature
+    fan_speed:
+      name: Fan speed
+
+button:
+  - platform: aixun
+    aixun_id: station
+    preset_m1:
+      name: Preset M1
+    preset_m2:
+      name: Preset M2
+    preset_m3:
+      name: Preset M3
+
+binary_sensor:
+  - platform: aixun
+    aixun_id: station
+    sta_mode:
+      name: STA toggle
+    ap_mode:
+      name: AP toggle

@@ -8,10 +8,11 @@ from esphome.types import ConfigType
 CODEOWNERS = ["@randybb"]
 DEPENDENCIES = ["uart"]
 DOMAIN = "aixun"
+MULTI_CONF = True
 
 CONF_AIXUN_ID = "aixun_id"
 # Models with their own entities, the version text sensors work on any Aixun device.
-MODELS = ["P2408"]
+MODELS = ["P2408", "H310D"]
 
 aixun_ns = cg.esphome_ns.namespace("aixun")
 Aixun = aixun_ns.class_("Aixun", cg.PollingComponent, uart.UARTDevice)
@@ -37,6 +38,14 @@ def validate_p2408(config: ConfigType) -> ConfigType:
     return config
 
 
+def validate_h310d(config: ConfigType) -> ConfigType:
+    """Final validation of the platforms whose entities exist only on an H310D."""
+    if fv.get_declaring_config(config[CONF_AIXUN_ID]).get(CONF_MODEL) != "H310D":
+        raise cv.Invalid("these entities need model: H310D on the aixun hub")
+    return config
+
+
 async def to_code(config: ConfigType) -> None:
     var = await uart.new_uart_component(config)
     cg.add(var.set_p2408(config.get(CONF_MODEL) == "P2408"))
+    cg.add(var.set_h310d(config.get(CONF_MODEL) == "H310D"))

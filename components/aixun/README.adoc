@@ -7,6 +7,8 @@ through `usb_uart`; a plain `uart` works too.
 * Any model: model and firmware version (`JC_version`), no `model` needed.
 * `model: P2408` power supply: voltage, current and power of the PD+QC, Boot
 and DC outputs, DC output on/off, DC current limit.
+* `model: H310D` hot air station: ESPHome runs on the station's own WiFi/BLE
+module and talks to the main MCU, see <<h310d>>.
 
 == Configuration
 
@@ -59,13 +61,14 @@ number:
 [cols="1,1,3",options="header"]
 |===
 |Option |Default |Description
-|`model` |- |`P2408` for its entities below, leave out for other devices
+|`model` |- |`P2408` or `H310D` for their entities, leave out for other devices
 |`uart_id` |required |`uart` or `usb_uart` channel of the device
 |`update_interval` |`1s` |How often the sensors are published, the latest status line is used
 |===
 
 The entities are platforms of `text_sensor`, `sensor`, `switch` and `number`
-(`aixun_id` picks the hub when there are several):
+(`aixun_id` picks the hub when there are several); the H310D ones are listed
+in <<h310d>>:
 
 [cols="1,1,3",options="header"]
 |===
@@ -93,3 +96,153 @@ sent back as last read. The number shows the limit the supply reports back.
 * PD+QC cannot be switched and the voltage cannot be set over USB.
 * The sensors are unknown while the device is off or unplugged; the component
 reopens the status stream when it stops for 2 s.
+
+[[h310d]]
+== H310D
+
+The WiFi/BLE module of the H310D is a bare ESP32-C3 (QFN32, 4 MB flash) wired
+to the GD32 main MCU on UART0. ESPHome replaces its stock firmware, which also
+removes the stock firmware's BLE leak: it serves the configured WiFi SSID and
+password in plain text to anyone in range (GATT characteristic `ee01`, no
+pairing).
+
+=== Flashing
+
+The board has a 4-pad header *P2* wired to the C3's native USB (USB
+Serial/JTAG), so a cut USB cable is all it takes, no USB-UART adapter and no
+boot/reset buttons:
+
+[cols="1,1,1,2",options="header"]
+|===
+|P2 pad |C3 pin |USB wire |Notes
+|GND |GND |black |
+|D+ (USB data +) |GPIO19 |green |
+|D- (USB data -) |GPIO18 |white |
+|5V |- |red |VBUS, feeds the board's AMS1117-3.3 (Vin)
+|===
+
+The pads are listed in their order on the board. It enumerates as
+`303a:1001` (`/dev/ttyACM*`). Back up the stock flash before writing anything
+(on the unit checked, Secure Boot and Flash Encryption were off):
+
+[source,sh]
+----
+esptool --chip esp32c3 -p /dev/ttyACM0 get-security-info
+esptool --chip esp32c3 -p /dev/ttyACM0 read-flash 0x0 0x400000 h310d_c3_stock.bin
+----
+
+After the first flash everything goes over the air. The C3 is powered only
+while the station is switched on.
+
+=== Configuration
+
+[source,yaml]
+----
+esp32:
+  variant: esp32c3
+  framework:
+    type: esp-idf
+
+logger:
+  hardware_uart: USB_SERIAL_JTAG   # UART0 belongs to the MCU
+
+uart:
+  id: mcu_uart
+  rx_pin: GPIO20
+  tx_pin: GPIO21
+  baud_rate: 115200
+
+aixun:
+  model: H310D
+  uart_id: mcu_uart
+
+sensor:
+  - platform: aixun
+    current_temperature: {name: Temperature}
+    current_fan_speed: {name: Fan}
+    heating_power: {name: Heating power}
+
+number:
+  - platform: aixun
+    target_temperature: {name: Target temperature}
+    fan_speed: {name: Fan speed}
+
+button:
+  - platform: aixun
+    preset_m1: {name: Preset M1}
+    preset_m2: {name: Preset M2}
+    preset_m3: {name: Preset M3}
+
+text_sensor:
+  - platform: aixun
+    device_model: {name: Model}
+    firmware_version: {name: Firmware}
+    serial_number: {name: Serial}
+    heater_status: {name: Status}
+
+binary_sensor:
+  - platform: aixun
+    sta_mode: {name: STA toggle}
+    ap_mode: {name: AP toggle}
+----
+
+[cols="1,1,3",options="header"]
+|===
+|Platform |Option |Description
+|`sensor` |`current_temperature` |Air temperature, °C
+|`sensor` |`current_fan_speed` |Fan speed, %
+|`sensor` |`heating_power` |Heater duty, %
+|`number` |`target_temperature` |Set temperature 100-500 °C, follows the panel and the presets
+|`number` |`fan_speed` |Set fan speed 1-100 %, follows the panel and the presets
+|`button` |`preset_m1` .. `preset_m3` |Recall a preset (never saves one)
+|`text_sensor` |`device_model`, `firmware_version`, `serial_number` |From the MCU (e.g. `H310D`, `V1.16`)
+|`text_sensor` |`heater_status` |`Heating`, `Cooling` or `Standby`
+|`binary_sensor` |`sta_mode`, `ap_mode` |The WiFi STA/AP toggles of the panel menu, free to use as switches for anything
+|===
+
+The panel's WiFi icon shows the module's real WiFi state and signal (1-4
+bars from the RSSI); the BLE icon is off.
+
+=== Remote pairing
+
+The station sends its status only to a paired Aixun BS08 remote, so the
+component pairs as one 5 s after boot, named `BS08_<MAC of the C3>`. The
+first time, the panel asks to confirm *BS08 connecting*; after that the name
+is remembered and it connects silently. Until the station reports a change
+(handle lifted or docked, setpoint or preset changed on the panel) the status
+entities stay unknown.
+
+The remote protocol knows only temperature, fan and the three presets. The
+heating mode (soft/standard/turbo, curve, segmented) is neither reported nor
+settable; in the curve and segmented modes the status still shows the
+standard setpoints.
+
+=== Protocol notes
+
+Frame: `[cmd][flag][len16 LE][00 00 00][payload][crc8]`, `len` counts the
+whole frame, CRC-8 poly `0x07` over everything before it. `flag` is `0x00` on
+requests, `0xAA` on replies. Reverse engineered from the GD32 firmware
+`JCID_H310D_1.16.bin` and the BS08 remote firmware.
+
+[cols="1,3",options="header"]
+|===
+|Frame |Meaning
+|`01` (to MCU) |Device info: TLV `01` model, `02` serial, `03` firmware
+|`20` (to MCU) |Heartbeat for the panel icons: uptime u32, WiFi (3 = on), bars 1-4, BLE (0 = off), 1
+|`04` (to MCU) |Remote commands as TLVs, several per frame; the reply has a `02` per TLV
+|`04` (from MCU) |UI state: TLV `50` STA (`2` on, `1` off), `53` AP (`4` on, `1` off)
+|`02` + TLV `39` (from MCU) |Status: `1`, the heartbeat's WiFi byte echoed, busy, heating %, then int16 LE real temp, real fan, set temp, set fan
+|===
+
+Remote TLVs (in a `04` frame):
+
+[cols="1,3",options="header"]
+|===
+|TLV |Effect
+|`31` `BS08_...` + `30` `01` |Pair / connect
+|`3c` int16 LE |Set temperature
+|`3d` byte |Set fan speed
+|`3e` int16 / `3f` int8 |Temperature / fan step (signed)
+|`35` / `36` / `37` `00 xx` |Key M1 / M2 / M3, `xx` < 8 short press (recall), ≥ 8 long press (save)
+|`33` `00 s` |Next (`s` > 0) or previous preset
+|===
