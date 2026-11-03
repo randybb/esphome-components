@@ -286,6 +286,9 @@ bool Meshtastic::send_(uint32_t to, uint8_t portnum, const std::string &payload,
     put_varint(data, 3 << 3 | 0);
     put_varint(data, 1);
   }
+  // bitfield, always present since firmware 2.5: tells receivers our hop_start is real; ok_to_mqtt off
+  put_varint(data, 9 << 3 | 0);
+  put_varint(data, 0);
   if (HEADER_SIZE + data.size() > MAX_PACKET) {
     ESP_LOGW(TAG, "Payload too long (%u B)", payload.size());
     return false;
@@ -320,6 +323,9 @@ void Meshtastic::send_node_info(uint32_t to, bool want_response) {
   put_bytes(user, 1, str_sprintf("!%08" PRIx32, this->node_id_));
   put_bytes(user, 2, this->long_name_);
   put_bytes(user, 3, this->short_name_);
+  uint8_t mac[6];
+  get_mac_address_raw(mac);
+  put_bytes(user, 4, std::string(reinterpret_cast<const char *>(mac), sizeof(mac)));
   put_varint(user, 5 << 3 | 0);
   put_varint(user, HW_MODEL_PRIVATE);
   put_varint(user, 7 << 3 | 0);
