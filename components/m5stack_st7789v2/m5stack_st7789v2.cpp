@@ -165,6 +165,37 @@ void M5StackST7789V2::loop() {
     this->disable_loop();
 }
 
+void M5StackST7789V2::draw_pixels_at(int x_start, int y_start, int w, int h, const uint8_t *ptr,
+                                      display::ColorOrder order, display::ColorBitness bitness, bool big_endian,
+                                      int x_offset, int y_offset, int x_pad) {
+  if (this->buffer_ == nullptr)
+    return;
+  if (order != display::COLOR_ORDER_RGB || bitness != display::COLOR_BITNESS_565 ||
+      this->get_rotation() != display::DISPLAY_ROTATION_0_DEGREES || this->is_clipping() || x_start < 0 ||
+      y_start < 0 || w <= 0 || h <= 0 || x_start + w > WIDTH || y_start + h > HEIGHT) {
+    display::Display::draw_pixels_at(x_start, y_start, w, h, ptr, order, bitness, big_endian, x_offset, y_offset,
+                                     x_pad);
+  } else {
+    const size_t stride = size_t(x_offset + w + x_pad) * 2;
+    for (int row = 0; row < h; row++) {
+      const uint8_t *src = ptr + (y_offset + row) * stride + x_offset * 2;
+      uint8_t *dst = this->buffer_ + ((y_start + row) * WIDTH + x_start) * 2;
+      if (big_endian) {
+        memcpy(dst, src, w * 2);
+      } else {
+        for (int i = 0; i < w * 2; i += 2) {
+          dst[i] = src[i + 1];
+          dst[i + 1] = src[i];
+        }
+      }
+    }
+  }
+  // unchanged rows are skipped by their hash
+  this->row_ = 0;
+  if (this->connected_)
+    this->enable_loop();
+}
+
 void HOT M5StackST7789V2::draw_absolute_pixel_internal(int x, int y, Color color) {
   if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT)
     return;

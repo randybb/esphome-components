@@ -24,6 +24,9 @@ class M5StackST7789V2 : public display::DisplayBuffer, public i2c::I2CDevice {
   void set_brightness(float brightness);
 
   display::DisplayType get_display_type() override { return display::DisplayType::DISPLAY_TYPE_COLOR; }
+  /// LVGL flushes: RGB565 blocks are copied into the frame, the rows go out from loop().
+  void draw_pixels_at(int x_start, int y_start, int w, int h, const uint8_t *ptr, display::ColorOrder order,
+                      display::ColorBitness bitness, bool big_endian, int x_offset, int y_offset, int x_pad) override;
 
  protected:
   void draw_absolute_pixel_internal(int x, int y, Color color) override;

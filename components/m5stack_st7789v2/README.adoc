@@ -34,6 +34,23 @@ display:
       it.print(0, 0, id(font), "Hello");
 ----
 
+With LVGL the display has no lambda and no rotation (LVGL rotates), its
+flushes are copied straight into the frame:
+
+[source,yaml]
+----
+display:
+  - platform: m5stack_st7789v2
+    id: unit_lcd
+    update_interval: 10s   # only reconnects a lost unit
+    auto_clear_enabled: false
+
+lvgl:
+  displays: unit_lcd
+  rotation: 90
+  buffer_size: 100%
+----
+
 The usual display options (`rotation`, `pages`, `lambda`, `update_interval`)
 apply. The backlight can be changed at runtime with
 `id(unit_lcd).set_brightness(0.1);`.
