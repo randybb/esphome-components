@@ -1,0 +1,12 @@
+# Common I2C configuration for ESP32 IDF tests
+# Provides a shared I2C bus that all components can use
+
+substitutions:
+  sda_pin: GPIO21
+  scl_pin: GPIO22
+
+i2c:
+  - id: i2c_bus
+    sda: ${sda_pin}
+    scl: ${scl_pin}
+    frequency: 400kHz

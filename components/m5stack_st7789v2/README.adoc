@@ -1,0 +1,50 @@
+= m5stack_st7789v2
+
+M5Stack Unit LCD (U120): 1.14" ST7789V2, 135 x 240, on I2C (address 0x3E,
+up to 400 kHz). The panel is driven by an ESP32-PICO in the unit, which takes
+the LovyanGFX `Panel_M5UnitLCD` command set; this component speaks that, not
+ST7789 commands.
+
+The frame is kept on the ESP in RGB565 (64.8 kB). After each `update` only the
+rows that differ from what the unit shows are sent (a hash per row, so a lambda
+that clears and redraws everything costs nothing when the result is the same),
+RLE compressed (a solid row is 4 bytes instead of 271), a few rows per main loop
+pass. A busy frame, e.g. a photo, is about 1.7 s at 400 kHz and does not block
+anything; text on a solid background is several times faster. Good for dashboards,
+too slow for animation.
+
+If the unit stops answering (unplugged, restarted) it is reconnected on the
+next `update` and gets the whole frame again.
+
+== Configuration
+
+[source,yaml]
+----
+i2c:
+  sda: GPIO21
+  scl: GPIO22
+  frequency: 400kHz
+
+display:
+  - platform: m5stack_st7789v2
+    id: unit_lcd
+    rotation: 90
+    brightness: 60%   # backlight, default 100%
+    lambda: |-
+      it.print(0, 0, id(font), "Hello");
+----
+
+The usual display options (`rotation`, `pages`, `lambda`, `update_interval`)
+apply. The backlight can be changed at runtime with
+`id(unit_lcd).set_brightness(0.1);`.
+
+== Notes
+
+* Tested with unit firmware 0.3 (updatable over I2C, see
+  https://github.com/m5stack/M5UnitLCD_FirmWare[M5UnitLCD_FirmWare]).
+* The unit keeps its own rotation, the component resets it to portrait on
+  connect and ESPHome's `rotation` is applied in the frame.
+* The unit has its own command buffer; the free slots are read before
+  sending and a pixel row is charged a slot per 4 pixels, as LovyanGFX does.
+* After it answers its ID the unit needs about 250 ms before it draws, the
+  component waits 300 ms once per (re)connect.

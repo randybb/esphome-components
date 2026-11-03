@@ -1,0 +1,15 @@
+display:
+  - platform: m5stack_st7789v2
+    id: unit_lcd
+    rotation: 90
+    brightness: 60%
+    lambda: |-
+      it.fill(Color(0, 0, 64));
+      it.filled_rectangle(10, 10, 60, 40, Color(255, 128, 0));
+      it.line(0, 0, it.get_width() - 1, it.get_height() - 1, Color::WHITE);
+
+button:
+  - platform: template
+    name: Dim
+    on_press:
+      - lambda: id(unit_lcd).set_brightness(0.1);
