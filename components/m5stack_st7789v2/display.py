@@ -1,7 +1,13 @@
 import esphome.codegen as cg
 from esphome.components import display, i2c
 import esphome.config_validation as cv
-from esphome.const import CONF_BRIGHTNESS, CONF_ID, CONF_LAMBDA, CONF_PAGES
+from esphome.const import (
+    CONF_BRIGHTNESS,
+    CONF_ID,
+    CONF_INVERT_COLORS,
+    CONF_LAMBDA,
+    CONF_PAGES,
+)
 from esphome.types import ConfigType
 
 from . import m5stack_st7789v2_ns
@@ -17,6 +23,7 @@ CONFIG_SCHEMA = cv.All(
         {
             cv.GenerateID(): cv.declare_id(M5StackST7789V2),
             cv.Optional(CONF_BRIGHTNESS, default="100%"): cv.percentage,
+            cv.Optional(CONF_INVERT_COLORS, default=False): cv.boolean,
         }
     )
     .extend(cv.polling_component_schema("1s"))
@@ -31,3 +38,4 @@ async def to_code(config: ConfigType) -> None:
     await i2c.register_i2c_device(var, config)
     await display.add_writer(var, config)
     cg.add(var.set_brightness(config[CONF_BRIGHTNESS]))
+    cg.add(var.set_invert(config[CONF_INVERT_COLORS]))

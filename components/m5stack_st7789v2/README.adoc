@@ -30,6 +30,7 @@ display:
     id: unit_lcd
     rotation: 90
     brightness: 60%   # backlight, default 100%
+    invert_colors: false
     lambda: |-
       it.print(0, 0, id(font), "Hello");
 ----
@@ -52,8 +53,12 @@ lvgl:
 ----
 
 The usual display options (`rotation`, `pages`, `lambda`, `update_interval`)
-apply. The backlight can be changed at runtime with
-`id(unit_lcd).set_brightness(0.1);`.
+apply. At runtime, from a lambda:
+
+* `id(unit_lcd).set_brightness(0.1);` backlight
+* `id(unit_lcd).set_invert(true);` inverted colors
+* `id(unit_lcd).set_sleep(true);` panel sleep, the frame is sent whole again on
+  wake
 
 == Notes
 

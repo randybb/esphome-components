@@ -22,6 +22,10 @@ class M5StackST7789V2 : public display::DisplayBuffer, public i2c::I2CDevice {
 
   /// Backlight, 0.0 to 1.0.
   void set_brightness(float brightness);
+  /// Inverted colors (the panel's INVON).
+  void set_invert(bool invert);
+  /// Panel sleep; the frame is sent whole again on wake.
+  void set_sleep(bool sleep);
 
   display::DisplayType get_display_type() override { return display::DisplayType::DISPLAY_TYPE_COLOR; }
   /// LVGL flushes: RGB565 blocks are copied into the frame, the rows go out from loop().
@@ -34,10 +38,13 @@ class M5StackST7789V2 : public display::DisplayBuffer, public i2c::I2CDevice {
   int get_height_internal() override { return HEIGHT; }
 
   bool connect_();
+  void command_(uint8_t cmd, uint8_t value);
   bool wait_buffer_(uint8_t needed);
 
   bool connected_{false};
   uint8_t brightness_{255};
+  bool invert_{false};
+  bool sleep_{false};
   uint8_t free_{0};
   // Next row to compare with what the unit shows, HEIGHT when all are sent.
   int row_{HEIGHT};

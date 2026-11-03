@@ -14,10 +14,13 @@ static const char *const TAG = "m5stack_st7789v2";
 // From LovyanGFX Panel_M5UnitLCD, coordinates are one byte each (the panel is under 256 px).
 static constexpr uint8_t CMD_READ_ID = 0x04;        // answers 0x77 0x89 <major> <minor>
 static constexpr uint8_t CMD_READ_BUFCOUNT = 0x09;  // answers the free command slots, up to 255
+static constexpr uint8_t CMD_INVOFF = 0x20;
+static constexpr uint8_t CMD_INVON = 0x21;
 static constexpr uint8_t CMD_BRIGHTNESS = 0x22;     // [1] backlight 0-255
 static constexpr uint8_t CMD_CASET = 0x2A;          // [1] xs [2] xe
 static constexpr uint8_t CMD_RASET = 0x2B;          // [1] ys [2] ye
 static constexpr uint8_t CMD_ROTATE = 0x36;         // [1] 0-3, the unit may start rotated
+static constexpr uint8_t CMD_SET_SLEEP = 0x39;      // [1] 0 wake, 1 sleep
 static constexpr uint8_t CMD_WRITE_RAW_16 = 0x42;   // RGB565 pixels, high byte first, into the window
 static constexpr uint8_t CMD_WRITE_RLE_16 = 0x4A;   // RGB565 high byte first: [n, pixel] runs, [0, n, n pixels] literals
 
@@ -50,6 +53,8 @@ bool M5StackST7789V2::connect_() {
   this->connected_ = true;
   this->free_ = 0;
   this->set_brightness(this->brightness_ / 255.0f);
+  this->set_invert(this->invert_);
+  this->set_sleep(this->sleep_);
   // Its frame is unknown after a (re)start, send ours whole.
   memset(this->sent_hash_, 0, sizeof(this->sent_hash_));
   this->row_ = 0;
@@ -69,7 +74,32 @@ void M5StackST7789V2::set_brightness(float brightness) {
   this->brightness_ = lroundf(brightness * 255);
   if (!this->connected_)
     return;
-  const uint8_t data[] = {CMD_BRIGHTNESS, this->brightness_};
+  this->command_(CMD_BRIGHTNESS, this->brightness_);
+}
+
+void M5StackST7789V2::set_invert(bool invert) {
+  this->invert_ = invert;
+  if (!this->connected_)
+    return;
+  const uint8_t cmd = invert ? CMD_INVON : CMD_INVOFF;
+  this->write(&cmd, 1);
+}
+
+void M5StackST7789V2::set_sleep(bool sleep) {
+  const bool wake = this->sleep_ && !sleep;
+  this->sleep_ = sleep;
+  if (!this->connected_)
+    return;
+  this->command_(CMD_SET_SLEEP, sleep);
+  if (wake) {
+    memset(this->sent_hash_, 0, sizeof(this->sent_hash_));
+    this->row_ = 0;
+    this->enable_loop();
+  }
+}
+
+void M5StackST7789V2::command_(uint8_t cmd, uint8_t value) {
+  const uint8_t data[] = {cmd, value};
   this->write(data, sizeof(data));
 }
 
@@ -208,7 +238,10 @@ void HOT M5StackST7789V2::draw_absolute_pixel_internal(int x, int y, Color color
 void M5StackST7789V2::dump_config() {
   LOG_DISPLAY("", "M5Stack ST7789V2 (Unit LCD)", this);
   LOG_I2C_DEVICE(this);
-  ESP_LOGCONFIG(TAG, "  Brightness: %u", this->brightness_);
+  ESP_LOGCONFIG(TAG,
+                "  Brightness: %u\n"
+                "  Invert colors: %s",
+                this->brightness_, YESNO(this->invert_));
   LOG_UPDATE_INTERVAL(this);
 }
 
