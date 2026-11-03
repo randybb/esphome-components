@@ -1,0 +1,51 @@
+canbus:
+  - platform: esp32_can
+    id: car_can
+    tx_pin: GPIO16
+    rx_pin: GPIO17
+    can_id: 0x7DF
+    bit_rate: 500KBPS
+
+can_tools:
+  id: car
+  requests:
+    - id: engine_rpm
+      can_id: 0x7DF
+      data: [0x01, 0x0C]
+      interval: 1s
+    - id: engine_coolant
+      can_id: 0x7E0
+      data: [0x01, 0x05]
+      interval: 30s
+      on_response:
+        - logger.log:
+            format: "coolant raw %u"
+            args: ["data[2]"]
+    - id: meter_fuel
+      can_id: 0x7C0
+      data: [0x21, 0x29]
+      interval: 60s
+      timeout: 1s
+
+sensor:
+  - platform: can_tools
+    request_id: engine_rpm
+    name: Engine RPM
+    lambda: return (data[2] << 8 | data[3]) / 4.0f;
+  - platform: can_tools
+    request_id: engine_coolant
+    name: Coolant
+    lambda: return data[2] - 40.0f;
+  - platform: can_tools
+    request_id: meter_fuel
+    name: Fuel
+    lambda: |-
+      if (data.size() < 3)
+        return {};
+      return data[2] / 2.0f;
+
+binary_sensor:
+  - platform: can_tools
+    request_id: engine_rpm
+    name: Engine running
+    lambda: return data[2] || data[3];

@@ -19,6 +19,7 @@ external_components:
 |link:components/ant_plus/[ant_plus] |ANT+ sensors (heart rate, power, speed, FE-C, temperature, batteries) on the chip's own radio (nRF52840, zephyr fork, RadiANT)
 |link:components/aixun/[aixun] |Aixun devices on their UART or USB port (ESP32-S3 USB host): model and firmware version of any of them, P2408 power supply sensors, DC output and current limit, H310D hot air station from its own ESP32-C3 (temperature, fan, presets, status)
 |link:components/audio_spectrum/[audio_spectrum] |Pass-through speaker that computes a spectrum of the audio for a Winamp style analyzer display
+|link:components/can_tools/[can_tools] |CAN bus tools on a canbus component: ISO-TP diagnostic requests (OBD-II, UDS, manufacturer services) decoded by sensor lambdas
 |link:components/creality_cfs/[creality_cfs] |Creality CFS filament tags (MIFARE Classic) read by pn5180: decrypted record, sensors, writing tags
 |link:components/m5stack_keyboard/[m5stack_keyboard] |M5Stack I2C keyboards (Faces QWERTY, CardKB) as a key provider for key_collector
 |link:components/m5stack_st7789v2/[m5stack_st7789v2] |M5Stack Unit LCD (ST7789V2 behind the unit's ESP32 on I2C) as a color display, only changed rows are sent, RLE compressed
