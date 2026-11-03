@@ -12,6 +12,7 @@ sx127x:
   crc_enable: true
 
 meshtastic:
+  id: mesh
   long_name: ESPHome test
   on_message:
     - logger.log:
@@ -20,6 +21,12 @@ meshtastic:
     - meshtastic.send_text:
         text: !lambda return "echo " + text;
         to: !lambda return from;
+  on_node:
+    - lambda: |-
+        ESP_LOGI("test", "%s at %s, %s", node.id().c_str(), meshtastic::num(node.latitude, 5).c_str(),
+                 meshtastic::num(node.longitude, 5).c_str());
+        const auto *n = id(mesh).get_node(node.num);
+        ESP_LOGI("test", "%u nodes, %s", id(mesh).get_nodes().size(), n != nullptr ? n->long_name.c_str() : "");
 
 script:
   - id: say_hello

@@ -16,12 +16,14 @@ CONF_KEY = "key"
 CONF_LONG_NAME = "long_name"
 CONF_NODE_ID = "node_id"
 CONF_ON_MESSAGE = "on_message"
+CONF_ON_NODE = "on_node"
 CONF_SHORT_NAME = "short_name"
 
 BROADCAST = 0xFFFFFFFF
 
 meshtastic_ns = cg.esphome_ns.namespace("meshtastic")
 Meshtastic = meshtastic_ns.class_("Meshtastic", cg.Component, SX127xListener)
+Node = meshtastic_ns.struct("Node")
 
 
 def channel_key(value):
@@ -56,6 +58,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_SHORT_NAME): cv.All(cv.string_strict, cv.Length(min=1, max=4)),
             cv.Optional(CONF_HOP_LIMIT, default=3): cv.int_range(min=0, max=7),
             cv.Optional(CONF_ON_MESSAGE): automation.validate_automation(single=True),
+            cv.Optional(CONF_ON_NODE): automation.validate_automation(single=True),
         }
     ).extend(cv.COMPONENT_SCHEMA),
     cv.only_on_esp32,
@@ -85,6 +88,10 @@ async def to_code(config: ConfigType) -> None:
                 (cg.float_, "snr"),
             ],
             config[CONF_ON_MESSAGE],
+        )
+    if CONF_ON_NODE in config:
+        await automation.build_automation(
+            var.get_node_trigger(), [(Node, "node")], config[CONF_ON_NODE]
         )
 
 

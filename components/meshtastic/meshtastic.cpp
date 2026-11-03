@@ -178,13 +178,43 @@ bool Meshtastic::seen_(uint32_t from, uint32_t id) {
   return false;
 }
 
+std::string Node::id() const { return str_sprintf("!%08" PRIx32, this->num); }
+
+const Node *Meshtastic::get_node(uint32_t num) const {
+  auto it = this->nodes_.find(num);
+  return it == this->nodes_.end() ? nullptr : &it->second;
+}
+
 std::string Meshtastic::node_name(uint32_t node) const {
   if (node == BROADCAST)
     return "all";
-  auto it = this->names_.find(node);
-  if (it != this->names_.end())
-    return it->second;
+  const Node *n = this->get_node(node);
+  if (n != nullptr && !n->long_name.empty())
+    return n->long_name;
   return str_sprintf("!%08" PRIx32, node);
+}
+
+Node &Meshtastic::node_(uint32_t num) {
+  auto it = this->nodes_.find(num);
+  if (it != this->nodes_.end())
+    return it->second;
+  if (this->nodes_.size() >= MAX_NODES) {
+    // forget the node heard longest ago
+    auto oldest = std::min_element(this->nodes_.begin(), this->nodes_.end(), [](const auto &a, const auto &b) {
+      return a.second.last_heard < b.second.last_heard;
+    });
+    this->nodes_.erase(oldest);
+  }
+  Node &n = this->nodes_[num];
+  n.num = num;
+  return n;
+}
+
+static float as_float(uint64_t bits) {
+  const uint32_t b = bits;
+  float f;
+  memcpy(&f, &b, sizeof(f));
+  return f;
 }
 
 void Meshtastic::on_packet(const std::vector<uint8_t> &packet, float rssi, float snr) {
@@ -210,6 +240,7 @@ void Meshtastic::on_packet(const std::vector<uint8_t> &packet, float rssi, float
 
   uint32_t portnum = 0;
   bool want_response = false;
+  bool has_bitfield = false;
   const uint8_t *payload = nullptr;
   size_t payload_len = 0;
   const bool ok = for_each_field(data.data(), data.size(), [&](const Field &f) {
@@ -217,6 +248,8 @@ void Meshtastic::on_packet(const std::vector<uint8_t> &packet, float rssi, float
       portnum = f.value;
     else if (f.number == 3)
       want_response = f.value;
+    else if (f.number == 9)
+      has_bitfield = true;
     else if (f.number == 2 && f.data != nullptr) {
       payload = f.data;
       payload_len = f.len;
@@ -228,53 +261,102 @@ void Meshtastic::on_packet(const std::vector<uint8_t> &packet, float rssi, float
              rssi);
     return;
   }
+
+  Node &node = this->node_(from);
+  node.last_heard = millis();
+  node.rssi = rssi;
+  node.snr = snr;
+  // as getHopsAway() in the firmware: hop_start 0 is only trusted from firmware that sends the bitfield
+  node.hops = (hop_start < hops_left || (hop_start == 0 && !has_bitfield)) ? -1 : hop_start - hops_left;
   const std::string from_name = this->node_name(from);
   // ponytail: one request per new node, a busy mesh after boot means a burst of them
-  if (!this->long_name_.empty() && portnum != PORT_NODEINFO && this->asked_.size() < 64 &&
-      this->names_.find(from) == this->names_.end() &&
-      std::find(this->asked_.begin(), this->asked_.end(), from) == this->asked_.end()) {
+  if (!this->long_name_.empty() && portnum != PORT_NODEINFO && node.long_name.empty() && !node.asked &&
+      this->asked_count_ < MAX_NODES) {
     // ask once for the name, the node answers with its NodeInfo
-    this->asked_.push_back(from);
+    node.asked = true;
+    this->asked_count_++;
     this->send_node_info(from, true);
   }
-  const unsigned hops = hop_start >= hops_left ? hop_start - hops_left : 0;
 
+  bool changed = true;
   switch (portnum) {
     case PORT_TEXT_MESSAGE: {
       std::string text(reinterpret_cast<const char *>(payload), payload_len);
-      ESP_LOGI(TAG, "%s -> %s (%u hops, %.0f dBm, SNR %.1f): %s", from_name.c_str(), this->node_name(to).c_str(), hops,
-               rssi, snr, text.c_str());
+      ESP_LOGI(TAG, "%s -> %s (%d hops, %.0f dBm, SNR %.1f): %s", from_name.c_str(), this->node_name(to).c_str(),
+               node.hops, rssi, snr, text.c_str());
       this->message_trigger_.trigger(from, to, from_name, text, rssi, snr);
+      changed = false;
       break;
     }
-    case PORT_NODEINFO: {
-      std::string long_name, short_name;
+    case PORT_NODEINFO:
       for_each_field(payload, payload_len, [&](const Field &f) {
         if (f.number == 2 && f.data != nullptr)
-          long_name.assign(reinterpret_cast<const char *>(f.data), f.len);
+          node.long_name.assign(reinterpret_cast<const char *>(f.data), f.len);
         else if (f.number == 3 && f.data != nullptr)
-          short_name.assign(reinterpret_cast<const char *>(f.data), f.len);
+          node.short_name.assign(reinterpret_cast<const char *>(f.data), f.len);
+        else if (f.number == 5)
+          node.hw_model = f.value;
+        else if (f.number == 7)
+          node.role = f.value;
       });
-      ESP_LOGI(TAG, "!%08" PRIx32 " is %s (%s), %u hops, %.0f dBm", from, long_name.c_str(), short_name.c_str(), hops,
-               rssi);
-      if (!long_name.empty()) {
-        // ponytail: drops an arbitrary node when full, an LRU if meshes get bigger
-        if (this->names_.size() >= 64 && this->names_.find(from) == this->names_.end())
-          this->names_.erase(this->names_.begin());
-        this->names_[from] = long_name;
-      }
+      ESP_LOGI(TAG, "%s is %s (%s), hardware %u, %d hops, %.0f dBm", node.id().c_str(), node.long_name.c_str(),
+               node.short_name.c_str(), node.hw_model, node.hops, rssi);
       if (want_response && to == this->node_id_ && !this->long_name_.empty())
         this->send_node_info(from, false);
       break;
-    }
     case PORT_POSITION:
-    case PORT_ROUTING:
+      for_each_field(payload, payload_len, [&](const Field &f) {
+        if (f.number == 1)
+          node.latitude = int32_t(f.value) * 1e-7;
+        else if (f.number == 2)
+          node.longitude = int32_t(f.value) * 1e-7;
+        else if (f.number == 3)
+          node.altitude = int32_t(f.value);
+        else if (f.number == 19)
+          node.sats_in_view = f.value;
+      });
+      ESP_LOGI(TAG, "%s at %.5f, %.5f, %.0f m", from_name.c_str(), node.latitude, node.longitude, node.altitude);
+      break;
     case PORT_TELEMETRY:
+      changed = for_each_field(payload, payload_len, [&](const Field &t) {
+        if (t.number == 2 && t.data != nullptr) {
+          for_each_field(t.data, t.len, [&](const Field &f) {
+            if (f.number == 1)
+              node.battery_level = f.value;
+            else if (f.number == 2)
+              node.voltage = as_float(f.value);
+            else if (f.number == 3)
+              node.channel_utilization = as_float(f.value);
+            else if (f.number == 4)
+              node.air_util_tx = as_float(f.value);
+            else if (f.number == 5)
+              node.uptime = f.value;
+          });
+          ESP_LOGI(TAG, "%s: battery %.0f %%, %.2f V, channel %.1f %%, air TX %.1f %%, up %" PRIu32 " s",
+                   from_name.c_str(), node.battery_level, node.voltage, node.channel_utilization, node.air_util_tx,
+                   node.uptime);
+        } else if (t.number == 3 && t.data != nullptr) {
+          for_each_field(t.data, t.len, [&](const Field &f) {
+            if (f.number == 1)
+              node.temperature = as_float(f.value);
+            else if (f.number == 2)
+              node.humidity = as_float(f.value);
+            else if (f.number == 3)
+              node.pressure = as_float(f.value);
+          });
+          ESP_LOGI(TAG, "%s: %.1f °C, %.0f %%, %.1f hPa", from_name.c_str(), node.temperature, node.humidity,
+                   node.pressure);
+        }
+      });
+      break;
     default:
-      ESP_LOGD(TAG, "%s -> %s: port %" PRIu32 ", %u B, %u hops, %.0f dBm", from_name.c_str(),
-               this->node_name(to).c_str(), portnum, payload_len, hops, rssi);
+      ESP_LOGD(TAG, "%s -> %s: port %" PRIu32 ", %u B, %d hops, %.0f dBm", from_name.c_str(),
+               this->node_name(to).c_str(), portnum, payload_len, node.hops, rssi);
+      changed = false;
       break;
   }
+  if (changed)
+    this->node_trigger_.trigger(node);
 }
 
 bool Meshtastic::send_(uint32_t to, uint8_t portnum, const std::string &payload, bool want_response) {

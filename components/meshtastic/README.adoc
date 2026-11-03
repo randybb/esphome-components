@@ -5,7 +5,10 @@ https://esphome.io/components/sx127x/[`sx127x`] radio: decrypts the messages of
 one channel, learns node names and sends text. It does not relay, the other
 nodes keep doing that.
 
-* Text messages (`TEXT_MESSAGE_APP`) fire `on_message`, other ports are logged.
+* Text messages (`TEXT_MESSAGE_APP`) fire `on_message`.
+* A node database (up to 100, the one heard longest ago goes first) keeps
+  names, RSSI/SNR, hops, position and device/environment telemetry; NodeInfo,
+  position and telemetry fire `on_node`. Other ports are logged.
 * Node names come from NodeInfo. A node heard for the first time is asked for
   it once, NodeInfo requests addressed to us are answered.
 * With `long_name` set it announces itself 30 s after boot and every 3 hours,
@@ -14,7 +17,7 @@ nodes keep doing that.
 
 Not supported: PKI direct messages (they come out as "undecodable"), AEAD
 channels, ACKs (a direct message to us gets retried by the sender), relaying,
-position and telemetry decoding, duty cycle tracking.
+duty cycle tracking.
 
 == Configuration
 
@@ -67,7 +70,57 @@ broadcasts), `from_name` (long name or `!xxxxxxxx`), `text`, `rssi` and `snr`.
     to: !lambda return from;   # or "!23e51eb0", default broadcast
 ----
 
+`on_node` gets `node`, a `meshtastic::Node` with `num`, `id()` (`!xxxxxxxx`),
+`long_name`, `short_name`, `hw_model`, `role`, `last_heard` (millis), `rssi`,
+`snr`, `hops` (-1 unknown), `latitude`, `longitude`, `altitude`,
+`sats_in_view`, `battery_level` (101 is powered), `voltage`,
+`channel_utilization`, `air_util_tx`, `uptime`, `temperature`, `humidity` and
+`pressure`. Unknown numbers are NAN. Lambdas can also read
+`id(mesh).get_node(num)` and `id(mesh).get_nodes()`.
+
 Sending blocks for the airtime (about 0.5 s at LongFast).
+
+== Nodes in Home Assistant
+
+Without a node already connected to HA through the Meshtastic integration,
+`on_node` can send each update as an event, `meshtastic::num()` turns NAN into
+an empty string:
+
+[source,yaml]
+----
+meshtastic:
+  on_node:
+    - homeassistant.event:
+        event: esphome.meshtastic_node
+        data:
+          node: !lambda return node.id();
+          long_name: !lambda return node.long_name;
+          latitude: !lambda return meshtastic::num(node.latitude, 7);
+          longitude: !lambda return meshtastic::num(node.longitude, 7);
+          battery_level: !lambda return meshtastic::num(node.battery_level, 0);
+----
+
+and an automation in HA puts the nodes with a position on the map:
+
+[source,yaml]
+----
+alias: Meshtastic nodes on the map
+mode: queued
+triggers:
+  - trigger: event
+    event_type: esphome.meshtastic_node
+conditions:
+  - condition: template
+    value_template: "{{ trigger.event.data.latitude != '' }}"
+actions:
+  - variables:
+      d: "{{ trigger.event.data }}"
+  - action: device_tracker.see
+    data:
+      dev_id: "meshtastic_{{ d.node[1:] }}"
+      host_name: "{{ d.long_name or d.node }}"
+      gps: ["{{ d.latitude | float }}", "{{ d.longitude | float }}"]
+----
 
 == Notes
 
