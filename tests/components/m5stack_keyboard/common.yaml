@@ -1,0 +1,11 @@
+m5stack_keyboard:
+  id: keyboard
+
+key_collector:
+  - source_id: keyboard
+    end_keys: "\r"
+    back_keys: "\b"
+    on_result:
+      - logger.log:
+          format: "Line: %s"
+          args: [x.c_str()]

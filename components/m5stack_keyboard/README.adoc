@@ -1,0 +1,42 @@
+= m5stack_keyboard
+
+M5Stack I2C keyboards with an ATmega that answers each one-byte read with the
+next key (0 when none): the Faces QWERTY face (address 0x08) and CardKB
+(0x5F). The keys go to a
+https://esphome.io/components/key_collector/[`key_collector`] like any other
+key provider.
+
+== Configuration
+
+[source,yaml]
+----
+external_components:
+  - source: github://randybb/esphome-components
+    components: [m5stack_keyboard]
+
+m5stack_keyboard:
+  - id: keyboard           # Faces QWERTY, address 0x08
+  - id: cardkb
+    address: 0x5F
+
+key_collector:
+  - source_id: keyboard
+    end_keys: "\r\n"
+    back_keys: "\b"
+    min_length: 1          # the Faces keyboard sends CR LF, the LF would be an empty line
+    on_result:
+      - logger.log:
+          format: "Line: %s"
+          args: [x.c_str()]
+----
+
+`update_interval` (default 20ms) is the polling period. The key codes are
+logged at VERBOSE level, handy for the Sym/Fn layers.
+
+== Notes
+
+* Tested with the Faces QWERTY (stock firmware from
+  https://github.com/m5stack/FACES-Firmware[FACES-Firmware], unchanged since
+  2018, it has no version query) and CardKB on an M5Stack Core2.
+* Enter on the Faces keyboard is CR LF, Backspace 0x08; the Shift, Sym and Fn
+  layers come as plain characters.
