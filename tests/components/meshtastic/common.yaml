@@ -1,0 +1,30 @@
+sx127x:
+  id: lora
+  cs_pin: 5
+  rst_pin: 26
+  dio0_pin: 35
+  modulation: LORA
+  frequency: 869525000
+  bandwidth: 250_0kHz
+  spreading_factor: 11
+  preamble_size: 16
+  sync_value: 0x2B
+  crc_enable: true
+
+meshtastic:
+  long_name: ESPHome test
+  on_message:
+    - logger.log:
+        format: "%s: %s"
+        args: [from_name.c_str(), text.c_str()]
+    - meshtastic.send_text:
+        text: !lambda return "echo " + text;
+        to: !lambda return from;
+
+script:
+  - id: say_hello
+    then:
+      - meshtastic.send_text: Hello
+      - meshtastic.send_text:
+          text: Hi
+          to: "!23e51eb0"

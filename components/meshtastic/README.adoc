@@ -1,0 +1,79 @@
+= meshtastic
+
+A Meshtastic node on top of the native
+https://esphome.io/components/sx127x/[`sx127x`] radio: decrypts the messages of
+one channel, learns node names and sends text. It does not relay, the other
+nodes keep doing that.
+
+* Text messages (`TEXT_MESSAGE_APP`) fire `on_message`, other ports are logged.
+* Node names come from NodeInfo. A node heard for the first time is asked for
+  it once, NodeInfo requests addressed to us are answered.
+* With `long_name` set it announces itself 30 s after boot and every 3 hours,
+  as `CLIENT_MUTE` with hardware model `PRIVATE_HW`.
+* Repeats of a packet (relays) are dropped by sender and packet id.
+
+Not supported: PKI direct messages (they come out as "undecodable"), AEAD
+channels, ACKs (a direct message to us gets retried by the sender), relaying,
+position and telemetry decoding, duty cycle tracking.
+
+== Configuration
+
+The radio has to match the Meshtastic preset, here EU_868 LongFast:
+
+[source,yaml]
+----
+external_components:
+  - source: github://randybb/esphome-components
+    components: [meshtastic]
+
+sx127x:
+  id: lora
+  cs_pin: GPIO19
+  rst_pin: GPIO26
+  dio0_pin: GPIO35
+  modulation: LORA
+  frequency: 869525000
+  bandwidth: 250_0kHz
+  spreading_factor: 11
+  coding_rate: CR_4_5
+  preamble_size: 16
+  sync_value: 0x2B
+  crc_enable: true
+  pa_pin: BOOST
+  pa_power: 14
+
+meshtastic:
+  id: mesh
+  long_name: My ESPHome node  # optional, without it we only listen
+  short_name: ESPH            # optional, the first 4 characters of long_name
+  # channel: LongFast         # the channel name, LongFast for the default channel
+  # key: AQ==                 # the channel PSK in base64 as the app shows it
+  # node_id: "!a860f9dc"      # default: the last 4 bytes of the MAC
+  # hop_limit: 3
+  on_message:
+    - logger.log:
+        format: "%s: %s"
+        args: [from_name.c_str(), text.c_str()]
+----
+
+`on_message` gets `from` and `to` (node numbers, `to` is `0xFFFFFFFF` for
+broadcasts), `from_name` (long name or `!xxxxxxxx`), `text`, `rssi` and `snr`.
+
+[source,yaml]
+----
+- meshtastic.send_text: Hello mesh
+- meshtastic.send_text:
+    text: !lambda return "echo " + text;
+    to: !lambda return from;   # or "!23e51eb0", default broadcast
+----
+
+Sending blocks for the airtime (about 0.5 s at LongFast).
+
+== Notes
+
+* Packet layout, key expansion (`AQ==` is the default key) and AES-CTR nonce
+  follow meshtastic/firmware `src/mesh`. The channel hash is the XOR of the
+  channel name and the key bytes, LongFast with the default key is 0x08.
+* Tested on an M5Stack Core2 with the LoRa868 module (SX1276) against Meshtastic
+  2.x nodes on EU_868 LongFast.
+* ESP32 only, it uses mbedTLS for AES.

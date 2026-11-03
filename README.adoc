@@ -22,6 +22,7 @@ external_components:
 |link:components/creality_cfs/[creality_cfs] |Creality CFS filament tags (MIFARE Classic) read by pn5180: decrypted record, sensors, writing tags
 |link:components/m5stack_keyboard/[m5stack_keyboard] |M5Stack I2C keyboards (Faces QWERTY, CardKB) as a key provider for key_collector
 |link:components/m5stack_st7789v2/[m5stack_st7789v2] |M5Stack Unit LCD (ST7789V2 behind the unit's ESP32 on I2C) as a color display, only changed rows are sent, RLE compressed
+|link:components/meshtastic/[meshtastic] |Meshtastic node on an SX127x radio: decrypts channel messages and node names, sends text, no relaying
 |link:components/openprinttag/[openprinttag] |OpenPrintTag filament spool tags read by pn5180: sensors, raw record for the Home Assistant integration, writing the consumed weight
 |link:components/p9813/[p9813] |P9813 RGB LED drivers with each channel as a separate output, e.g. for single-color LEDs on cut chainable modules
 |link:components/pn5180/[pn5180] |PN5180 tag reader: ISO 15693 tags with their memory, UIDs of ISO 14443A tags (NTAG, MIFARE), a general tag reader for Home Assistant
