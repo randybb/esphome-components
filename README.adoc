@@ -21,6 +21,7 @@ external_components:
 |link:components/audio_spectrum/[audio_spectrum] |Pass-through speaker that computes a spectrum of the audio for a Winamp style analyzer display
 |link:components/can_tools/[can_tools] |CAN bus tools on a canbus component: ISO-TP diagnostic requests (OBD-II, UDS, manufacturer services) decoded by sensor lambdas
 |link:components/creality_cfs/[creality_cfs] |Creality CFS filament tags (MIFARE Classic) read by pn5180: decrypted record, sensors, writing tags
+|link:components/m5ioe1/[m5ioe1] |M5Stack M5IOE1 I/O expander (e.g. in StackChan): GPIO, PWM, ADC, temperature, RGB LEDs, from m5stack/esphome-yaml with the light ported to ESPHome 2026.12
 |link:components/m5stack_keyboard/[m5stack_keyboard] |M5Stack I2C keyboards (Faces QWERTY, CardKB) as a key provider for key_collector
 |link:components/m5stack_st7789v2/[m5stack_st7789v2] |M5Stack Unit LCD (ST7789V2 behind the unit's ESP32 on I2C) as a color display, only changed rows are sent, RLE compressed
 |link:components/meshtastic/[meshtastic] |Meshtastic node on an SX127x radio: decrypts channel messages and node names, sends text, no relaying
