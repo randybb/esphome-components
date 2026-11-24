@@ -5,7 +5,14 @@
 #include <cstring>
 
 #include "esphome/core/log.h"
+
+#include <esp_idf_version.h>
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
+// mbedtls 4 (IDF 6) dropped the legacy AES API; PSA crypto is initialized by IDF at startup
+#include <psa/crypto.h>
+#else
 #include "mbedtls/aes.h"
+#endif
 
 namespace esphome::creality_cfs {
 
@@ -32,6 +39,23 @@ static bool is_mifare_classic(uint8_t sak) {
 }
 
 static void aes_ecb(const uint8_t *key, bool encrypt, const uint8_t *in, uint8_t *out, size_t length) {
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
+  psa_key_attributes_t attr = PSA_KEY_ATTRIBUTES_INIT;
+  psa_set_key_type(&attr, PSA_KEY_TYPE_AES);
+  psa_set_key_bits(&attr, 128);
+  psa_set_key_algorithm(&attr, PSA_ALG_ECB_NO_PADDING);
+  psa_set_key_usage_flags(&attr, encrypt ? PSA_KEY_USAGE_ENCRYPT : PSA_KEY_USAGE_DECRYPT);
+  psa_key_id_t id;
+  psa_status_t status = psa_import_key(&attr, key, 16, &id);
+  if (status == PSA_SUCCESS) {
+    size_t out_len;
+    status = encrypt ? psa_cipher_encrypt(id, PSA_ALG_ECB_NO_PADDING, in, length, out, length, &out_len)
+                     : psa_cipher_decrypt(id, PSA_ALG_ECB_NO_PADDING, in, length, out, length, &out_len);
+    psa_destroy_key(id);
+  }
+  if (status != PSA_SUCCESS)
+    ESP_LOGE(TAG, "AES failed: %d", (int) status);
+#else
   mbedtls_aes_context ctx;
   mbedtls_aes_init(&ctx);
   if (encrypt)
@@ -41,6 +65,7 @@ static void aes_ecb(const uint8_t *key, bool encrypt, const uint8_t *in, uint8_t
   for (size_t i = 0; i + 16 <= length; i += 16)
     mbedtls_aes_crypt_ecb(&ctx, encrypt ? MBEDTLS_AES_ENCRYPT : MBEDTLS_AES_DECRYPT, in + i, out + i);
   mbedtls_aes_free(&ctx);
+#endif
 }
 
 void CrealityCfsComponent::dump_config() { ESP_LOGCONFIG(TAG, "Creality CFS"); }
