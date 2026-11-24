@@ -119,8 +119,8 @@ sent on page 1 (not one it works out itself), and ignores colour and asset type.
 
 * nRF52840 only. RadiANT's radio backend uses the RXREADY event and Long Range
 registers the nRF52832 doesn't have.
-* The radio backend owns TIMER4 (set up by the component through a devicetree
-overlay).
+* The radio backend owns TIMER3 (set up by the component through a devicetree
+overlay; TIMER4 is left to the NFCT driver).
 * Leave Zephyr logging (`CONFIG_LOG`) off: RadiANT's event thread has a small
 fixed stack that ESPHome's log output overflows.
 

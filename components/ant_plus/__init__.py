@@ -363,10 +363,11 @@ async def to_code(config):
     )
     zephyr_add_prj_conf("RADIANT", True)
     zephyr_add_prj_conf("RADIANT_BACKEND_NRF", True)
-    # the radio backend owns a 1 MHz TIMER with 5 CC channels (TIMER3/4 on nRF52)
+    # the radio backend owns a 1 MHz TIMER with 5 CC channels (TIMER3/4 on nRF52);
+    # TIMER3, since the NFCT driver takes TIMER4 for its errata workaround
     zephyr_add_overlay(
-        "/ { chosen { radiant,radio-timer = &timer4; }; };\n"
-        '&timer4 { status = "okay"; };\n'
+        "/ { chosen { radiant,radio-timer = &timer3; }; };\n"
+        '&timer3 { status = "okay"; };\n'
     )
 
     var = cg.new_Pvariable(config[CONF_ID])

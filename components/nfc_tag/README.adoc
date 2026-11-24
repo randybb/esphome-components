@@ -1,0 +1,40 @@
+= nfc_tag
+
+The NFCT peripheral of an nRF52/nRF53 emulating an NFC Forum Type 2 tag with
+one NDEF URI record, for the
+https://github.com/esphomeplatformzephyr/esphome[esphomeplatformzephyr] fork
+(`nrf:` platform, `framework: type: ncs`). It uses the T2T library from NCS
+(nrfxlib). Read only, NFC-A only: the chip can't be a reader.
+
+A Home Assistant tag URL (`https://www.home-assistant.io/tag/<id>`) makes the
+companion app report a scanned tag.
+
+== Configuration
+
+[source,yaml]
+----
+nrf:
+  variant: NRF52
+  board: nrf52840dk/nrf52840
+  framework:
+    type: ncs
+
+external_components:
+  - source: github://randybb/esphome-components
+    components: [nfc_tag]
+
+nfc_tag:
+  url: https://www.home-assistant.io/tag/mcu-nrf-ant
+----
+
+* *url* (*Required*, string): the URI of the record. A known prefix
+  (`https://www.`, `https://`, `tel:` ...) is stored as its one-byte code.
+
+== Notes
+
+* An antenna goes to NFC1/NFC2 (P0.09/P0.10 on nRF52840), the DK has a
+  connector for it. The `nrf:` platform turns these pins into GPIOs, the
+  component undoes that in the devicetree.
+* That setting stays in UICR: a chip flashed before without NFC keeps its
+  pins as GPIOs until a full erase (`west flash --recover`).
+* On nRF52840 the NFCT driver takes TIMER4 for an errata workaround.
