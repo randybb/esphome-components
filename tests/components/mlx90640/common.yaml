@@ -1,0 +1,26 @@
+mlx90640:
+  web_ui: false
+  max_temperature:
+    name: Max Temperature
+  camera:
+    name: Thermal Camera
+
+select:
+  - platform: mlx90640
+    refresh_rate:
+      name: Refresh Rate
+
+number:
+  - platform: mlx90640
+    emissivity:
+      name: Emissivity
+
+switch:
+  - platform: mlx90640
+    mirror:
+      name: Mirror
+
+button:
+  - platform: mlx90640
+    reinitialize:
+      name: Reinitialize

@@ -1,0 +1,30 @@
+= mlx90640
+
+MLX90640 32x24 thermal camera on I2C (ESP32): temperature sensors, a camera
+entity (JPEG) for Home Assistant, an optional heatmap page at `/thermal`, and
+runtime settings as select/number/switch/button entities.
+
+Taken from https://github.com/shvmm/esphome-mlx-90640[shvmm/esphome-mlx-90640]
+at commit 8ff7680, Apache-2.0: see `LICENSE` and `NOTICE` in this directory.
+The upstream README documents all options.
+
+== Configuration
+
+[source,yaml]
+----
+external_components:
+  - source: github://randybb/esphome-components
+    components: [mlx90640]
+
+mlx90640:
+  id: thermal
+  refresh_rate: 4Hz
+  web_ui: false          # no web server, the heatmap page needs web_server_base
+  max_temperature:
+    name: Thermal Max
+  camera:
+    name: Thermal Camera
+----
+
+`copy_display_frame(float *dst)` copies the latest 32x24 frame, e.g. for an
+LVGL canvas on the device's own display.
