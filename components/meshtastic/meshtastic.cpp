@@ -4,7 +4,13 @@
 #include <cinttypes>
 #include <cstring>
 
+#include <esp_idf_version.h>
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
+// mbedtls 4 (IDF 6) dropped the legacy AES API; PSA crypto is initialized by IDF at startup
+#include <psa/crypto.h>
+#else
 #include <mbedtls/aes.h>
+#endif
 
 #include "esphome/core/alloc_helpers.h"
 #include "esphome/core/hal.h"
@@ -160,6 +166,31 @@ void Meshtastic::crypt_(uint32_t from, uint32_t id, uint8_t *data, size_t len) c
   uint8_t nonce[16]{};
   put_le32(nonce, id);
   put_le32(nonce + 8, from);
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
+  psa_key_attributes_t attr = PSA_KEY_ATTRIBUTES_INIT;
+  psa_set_key_type(&attr, PSA_KEY_TYPE_AES);
+  psa_set_key_bits(&attr, this->key_.size() * 8);
+  psa_set_key_algorithm(&attr, PSA_ALG_CTR);
+  psa_set_key_usage_flags(&attr, PSA_KEY_USAGE_ENCRYPT);
+  psa_key_id_t key;
+  psa_status_t status = psa_import_key(&attr, this->key_.data(), this->key_.size(), &key);
+  if (status == PSA_SUCCESS) {
+    // multipart, since the one-shot psa_cipher_encrypt() makes up its own IV
+    psa_cipher_operation_t op = PSA_CIPHER_OPERATION_INIT;
+    size_t out_len, fin_len;
+    status = psa_cipher_encrypt_setup(&op, key, PSA_ALG_CTR);
+    if (status == PSA_SUCCESS)
+      status = psa_cipher_set_iv(&op, nonce, sizeof(nonce));
+    if (status == PSA_SUCCESS)
+      status = psa_cipher_update(&op, data, len, data, len, &out_len);
+    if (status == PSA_SUCCESS)
+      status = psa_cipher_finish(&op, data + out_len, len - out_len, &fin_len);
+    psa_cipher_abort(&op);
+    psa_destroy_key(key);
+  }
+  if (status != PSA_SUCCESS)
+    ESP_LOGE(TAG, "AES failed: %d", (int) status);
+#else
   uint8_t stream[16];
   size_t offset = 0;
   mbedtls_aes_context aes;
@@ -167,6 +198,7 @@ void Meshtastic::crypt_(uint32_t from, uint32_t id, uint8_t *data, size_t len) c
   mbedtls_aes_setkey_enc(&aes, this->key_.data(), this->key_.size() * 8);
   mbedtls_aes_crypt_ctr(&aes, len, &offset, nonce, stream, data, data);
   mbedtls_aes_free(&aes);
+#endif
 }
 
 bool Meshtastic::seen_(uint32_t from, uint32_t id) {
@@ -388,7 +420,8 @@ bool Meshtastic::send_(uint32_t to, uint8_t portnum, const std::string &payload,
   memcpy(&packet[HEADER_SIZE], data.data(), data.size());
   this->crypt_(this->node_id_, id, &packet[HEADER_SIZE], data.size());
   // ponytail: blocks for the airtime (~0.5 s at LongFast), no queue and no duty cycle tracking
-  if (this->parent_->transmit_packet(packet) != sx127x::SX127xError::NONE) {
+  // {} = no error: NONE, SX127X_ERROR_NONE since 2026.12
+  if (this->parent_->transmit_packet(packet) != sx127x::SX127xError{}) {
     ESP_LOGW(TAG, "Transmit failed");
     return false;
   }
