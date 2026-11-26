@@ -77,7 +77,7 @@ low or critical). Sensors go `unknown` 10 s after the device's last page.
 |`speed` |Bike Speed (123) |`speed`, `distance` (since boot); option `wheel_circumference` (default 2105 mm)
 |`fitness_equipment` |FE-C (17) |`power`, `cadence` (strokes/min on a rower), `speed`, `distance`, `heart_rate`, `in_use` (binary, FE state IN_USE)
 |`temperature` |Environment (25), 0.5 Hz like the Garmin Tempe |`temperature`, `temperature_min`, `temperature_max` (the sensor's 24 h low/high)
-|`bike_radar` |Bike Radar (40) |battery only
+|`bike_radar` |Bike Radar (40), 8 Hz like the Garmin Varia |`targets` (vehicles, up to 8), `distance` and `speed` (closing) of the nearest one, `fast_approach` (binary); telemetry, not a safety warning. Only seen indoors so far, where a Varia RTL515 reported no vehicles
 |`shifting` |Shifting (34) |`battery_low` only, over every component's battery (their statuses are logged)
 |===
 
@@ -195,7 +195,7 @@ ships a decoder/encoder to build on; otherwise the pages are decoded here.
 |Bike Speed (123), Cadence (122), Speed & Cadence (121) |speed untested |no |cadence and combined sensors
 |Fitness Equipment FE-C (17) |rower untested |yes |all FE types (trainer, treadmill, elliptical, climber, nordic skier), elapsed time, trainer page 25; control: ERG target power, simulated grade (`profile_fec_tx`)
 |Environment (25) |done | yes |
-|Bike Radar (40) |battery only |no |threat count, distance and speed of approaching vehicles
+|Bike Radar (40) |done, untested outdoors |no |side of each vehicle, every target instead of the nearest
 |Bike Lights (35) |battery only |no |light state and mode; control (on/off, mode). Nice to have: ESPHome as a light a Garmin Edge controls (e.g. a workshop light), accepting commands only from the paired controller's ANT ID with pairing opened briefly on purpose. A compliant light also has to join the controller's light network (connect command page 33, shared channels), not only the broadcast channel
 |Shifting (34) |battery only |no |gear info (front/rear gear, number of gears)
 |Controls (16) | |yes |as controllable master: remotes (Garmin Edge Remote) with click and long click per button, commands have to be sniffed first; as remote: control a controllable device (Garmin VIRB XE camera: record, photo)

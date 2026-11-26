@@ -120,6 +120,7 @@ uint16_t AntPlusDevice::channel_period() const {
       // Garmin's Tempe runs at 0.5 Hz
       return 65535;
     case DeviceType::BIKE_RADAR:
+      return 4084;  // 8.02 Hz, so neither target page is skipped
     case DeviceType::SHIFTING:
       return 8192;  // 4 Hz
     case DeviceType::POWER:
@@ -135,6 +136,8 @@ void AntPlusDevice::on_page(const uint8_t *page, uint32_t now) {
     ESP_LOGI(TAG, "Receiving %s %" PRIu32, type_name(this->type_), this->ant_id_);
   this->last_page_ms_ = now;
   this->set_connected_(true);
+  ESP_LOGV(TAG, "%" PRIu32 " page %02X %02X %02X %02X %02X %02X %02X %02X", this->ant_id_, page[0], page[1], page[2],
+           page[3], page[4], page[5], page[6], page[7]);
 
   if (page[0] == PAGE_BATTERY_STATUS) {
     if (this->type_ == DeviceType::SHIFTING) {
@@ -161,6 +164,8 @@ void AntPlusDevice::on_page(const uint8_t *page, uint32_t now) {
       this->decode_speed_(page, now);
       break;
     case DeviceType::BIKE_RADAR:
+      this->decode_radar_(page, now);
+      break;
     case DeviceType::SHIFTING:
       break;  // only the battery is read
   }
@@ -210,6 +215,65 @@ void AntPlusDevice::decode_speed_(const uint8_t *page, uint32_t now) {
 #endif
   this->last_event_time_ = event_time;
   this->last_revolutions_ = revolutions;
+}
+
+void AntPlusDevice::decode_radar_(const uint8_t *page, uint32_t now) {
+  // pages 48 (targets 1-4) and 49 (5-8): [1] threat, [2] side, 2 bits per target,
+  // [3-5] range 6 bits each in 3.125 m, [6-7] closing speed 4 bits each in 3.04 m/s.
+  // Threat 0 = no target; 1 approaching, 2 fast approaching. Page 49 only comes
+  // with more than four targets, so its targets expire with it.
+  if (page[0] != 48 && page[0] != 49)
+    return;
+  uint8_t first = page[0] == 48 ? 0 : 4;
+  if (first == 4)
+    this->radar_page_b_ms_ = now;
+  uint32_t range = page[3] | (page[4] << 8) | (page[5] << 16);
+  for (uint8_t i = 0; i < 4; i++) {
+    uint8_t threat = (page[1] >> (2 * i)) & 0x03;
+    uint8_t speed = (page[6 + i / 2] >> (4 * (i % 2))) & 0x0F;
+    this->radar_targets_[first + i] = threat | ((range >> (6 * i)) & 0x3F) << 2 | speed << 8;
+  }
+  if (now - this->radar_page_b_ms_ > 1000)
+    std::fill(this->radar_targets_.begin() + 4, this->radar_targets_.end(), 0);
+
+  int count = 0;
+  uint8_t nearest_range = 0xFF, nearest_speed = 0;
+  bool fast = false;
+  for (uint16_t t : this->radar_targets_) {
+    if ((t & 0x03) == 0)
+      continue;
+    count++;
+    fast |= (t & 0x03) == 2;
+    uint8_t r = (t >> 2) & 0x3F;
+    if (r < nearest_range) {
+      nearest_range = r;
+      nearest_speed = t >> 8;
+    }
+  }
+  this->publish_radar_(count, nearest_range, nearest_speed, fast);
+}
+
+void AntPlusDevice::publish_radar_(int count, uint8_t range, uint8_t speed, bool fast) {
+  // the radar sends at 8 Hz: publish changes only
+  int state = count < 0 ? -2 : count | range << 4 | speed << 12 | fast << 16;
+  if (state == this->radar_last_)
+    return;
+  this->radar_last_ = state;
+  ESP_LOGD(TAG, "Radar %" PRIu32 ": %d vehicles, nearest %.1f m closing at %.1f m/s%s", this->ant_id_, count,
+           range * 3.125f, speed * 3.04f, fast ? ", fast" : "");
+#ifdef USE_SENSOR
+  if (this->targets_ != nullptr)
+    this->targets_->publish_state(count < 0 ? NAN : count);
+  // nearest target; nothing when there's none
+  if (this->distance_ != nullptr)
+    this->distance_->publish_state(count > 0 ? range * 3.125f : NAN);
+  if (this->speed_ != nullptr)
+    this->speed_->publish_state(count > 0 ? speed * 3.04f : NAN);
+#endif
+#ifdef USE_BINARY_SENSOR
+  if (this->fast_approach_ != nullptr)
+    this->fast_approach_->publish_state(fast);
+#endif
 }
 
 void AntPlusDevice::decode_shifting_battery_(const uint8_t *page) {
@@ -332,6 +396,10 @@ void AntPlusDevice::check_stale(uint32_t now) {
   if (this->in_use_ != nullptr)
     this->in_use_->publish_state(false);
 #endif
+  if (this->type_ == DeviceType::BIKE_RADAR) {
+    this->radar_targets_.fill(0);
+    this->publish_radar_(-1, 0, 0, false);  // unknown, not "no traffic"
+  }
 }
 
 void AntPlusDevice::set_connected_(bool connected) {

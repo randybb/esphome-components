@@ -39,7 +39,6 @@ from esphome.const import (
     UNIT_VOLT,
     UNIT_WATT,
 )
-from esphome.core import CORE
 
 CODEOWNERS = ["@randybb"]
 DOMAIN = "ant_plus"
@@ -61,6 +60,8 @@ CONF_ASSETS = "assets"
 CONF_COLOUR = "colour"
 CONF_ASSET_TYPE = "asset_type"
 CONF_TEMPERATURE_MIN = "temperature_min"
+CONF_TARGETS = "targets"
+CONF_FAST_APPROACH = "fast_approach"
 
 # RadiANT: clean-room ANT+ compatible link layer for Zephyr (Apache-2.0)
 RADIANT_URL = "https://github.com/winedarksea/RadiANT"
@@ -226,7 +227,27 @@ DEVICE_SCHEMA = cv.typed_schema(
             }
         ),
         # Garmin Varia and the like: only the battery is read
-        TYPE_BIKE_RADAR: DEVICE_BASE_SCHEMA,
+        # nearest vehicle of up to 8 (telemetry, not a safety warning)
+        TYPE_BIKE_RADAR: DEVICE_BASE_SCHEMA.extend(
+            {
+                cv.Optional(CONF_TARGETS): sensor.sensor_schema(
+                    icon="mdi:car-multiple",
+                    accuracy_decimals=0,
+                    state_class=STATE_CLASS_MEASUREMENT,
+                ),
+                cv.Optional(CONF_DISTANCE): sensor.sensor_schema(
+                    unit_of_measurement=UNIT_METER,
+                    accuracy_decimals=1,
+                    device_class=DEVICE_CLASS_DISTANCE,
+                    state_class=STATE_CLASS_MEASUREMENT,
+                ),
+                # closing speed
+                cv.Optional(CONF_SPEED): SPEED_SCHEMA,
+                cv.Optional(CONF_FAST_APPROACH): binary_sensor.binary_sensor_schema(
+                    icon="mdi:car-emergency",
+                ),
+            }
+        ),
         # electronic shifting (SRAM AXS, Shimano Di2): one battery per component, so
         # only battery_low (any of them low or critical); statuses are logged
         TYPE_SHIFTING: DEVICE_BASE_SCHEMA.extend(
@@ -324,9 +345,9 @@ SENSORS = (
     CONF_TEMPERATURE,
     CONF_TEMPERATURE_MIN,
     CONF_TEMPERATURE_MAX,
+    CONF_TARGETS,
 )
-BINARY_SENSORS = (CONF_CONNECTED, CONF_IN_USE, CONF_BATTERY_LOW)
-
+BINARY_SENSORS = (CONF_CONNECTED, CONF_IN_USE, CONF_BATTERY_LOW, CONF_FAST_APPROACH)
 
 
 async def to_code(config):

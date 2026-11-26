@@ -54,11 +54,13 @@ class AntPlusDevice {
   void set_temperature_sensor(sensor::Sensor *s) { this->temperature_ = s; }
   void set_temperature_min_sensor(sensor::Sensor *s) { this->temperature_min_ = s; }
   void set_temperature_max_sensor(sensor::Sensor *s) { this->temperature_max_ = s; }
+  void set_targets_sensor(sensor::Sensor *s) { this->targets_ = s; }
 #endif
 #ifdef USE_BINARY_SENSOR
   void set_connected_binary_sensor(binary_sensor::BinarySensor *s) { this->connected_ = s; }
   void set_in_use_binary_sensor(binary_sensor::BinarySensor *s) { this->in_use_ = s; }
   void set_battery_low_binary_sensor(binary_sensor::BinarySensor *s) { this->battery_low_ = s; }
+  void set_fast_approach_binary_sensor(binary_sensor::BinarySensor *s) { this->fast_approach_ = s; }
 #endif
 
  protected:
@@ -68,6 +70,8 @@ class AntPlusDevice {
   void decode_power_(const uint8_t *page);
   void decode_speed_(const uint8_t *page, uint32_t now);
   void decode_shifting_battery_(const uint8_t *page);
+  void decode_radar_(const uint8_t *page, uint32_t now);
+  void publish_radar_(int count, uint8_t range, uint8_t speed, bool fast);
   void decode_battery_(uint8_t fractional, uint8_t coarse);
   void set_connected_(bool connected);
 
@@ -87,6 +91,11 @@ class AntPlusDevice {
   float total_speed_distance_{0};
   // shifting: battery status per page 82 battery identifier (0 = not seen)
   std::array<uint8_t, 16> battery_status_{};
+  // radar: per target threat | range << 2 | speed << 8 (page 48: 0-3, page 49: 4-7),
+  // last page 49, last published values (-1 = none yet)
+  std::array<uint16_t, 8> radar_targets_{};
+  uint32_t radar_page_b_ms_{0};
+  int radar_last_{-1};
 
 #ifdef USE_SENSOR
   sensor::Sensor *heart_rate_{nullptr};
@@ -99,11 +108,13 @@ class AntPlusDevice {
   sensor::Sensor *temperature_{nullptr};
   sensor::Sensor *temperature_min_{nullptr};
   sensor::Sensor *temperature_max_{nullptr};
+  sensor::Sensor *targets_{nullptr};
 #endif
 #ifdef USE_BINARY_SENSOR
   binary_sensor::BinarySensor *connected_{nullptr};
   binary_sensor::BinarySensor *in_use_{nullptr};
   binary_sensor::BinarySensor *battery_low_{nullptr};
+  binary_sensor::BinarySensor *fast_approach_{nullptr};
 #endif
 };
 
