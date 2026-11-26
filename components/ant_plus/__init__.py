@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from esphome import git
 import esphome.codegen as cg
 from esphome.components import binary_sensor, sensor
@@ -66,7 +64,7 @@ CONF_TEMPERATURE_MIN = "temperature_min"
 
 # RadiANT: clean-room ANT+ compatible link layer for Zephyr (Apache-2.0)
 RADIANT_URL = "https://github.com/winedarksea/RadiANT"
-RADIANT_REF = "6979eb9ae9417dee5d9de43df5f816765a901048"
+RADIANT_REF = "282aeb58b321f75a0e9489405facdc3c1251671d"
 
 ant_plus_ns = cg.esphome_ns.namespace("ant_plus")
 AntPlus = ant_plus_ns.class_("AntPlus", cg.Component)
@@ -330,25 +328,6 @@ SENSORS = (
 BINARY_SENSORS = (CONF_CONNECTED, CONF_IN_USE, CONF_BATTERY_LOW)
 
 
-def _antr_module(radiant: Path) -> Path:
-    """Zephyr module compiling RadiANT's antr_* adapter (apps/common), which the
-    radiant module itself leaves to the application."""
-    common = (radiant / "apps" / "common").as_posix()
-    module = Path(CORE.relative_build_path("ant_plus_antr"))
-    (module / "zephyr").mkdir(parents=True, exist_ok=True)
-    (module / "zephyr" / "module.yml").write_text(
-        "name: ant_plus_antr\nbuild:\n  cmake: .\n  kconfig: Kconfig\n"
-    )
-    (module / "Kconfig").write_text(f'source "{common}/Kconfig.antr_api"\n')
-    (module / "CMakeLists.txt").write_text(
-        "if(CONFIG_RADIANT_ANTR_API)\n"
-        "  zephyr_library()\n"
-        f'  zephyr_library_sources("{common}/ant_radio_radiant.c")\n'
-        f'  zephyr_include_directories("{common}" "{common}/ant")\n'
-        "endif()\n"
-    )
-    return module
-
 
 async def to_code(config):
     radiant, _ = git.clone_or_update(
@@ -357,12 +336,9 @@ async def to_code(config):
     zephyr_set_module_override(
         "radiant", ZephyrModule(name="radiant", local_path=radiant / "radiant")
     )
-    zephyr_set_module_override(
-        "ant_plus_antr",
-        ZephyrModule(name="ant_plus_antr", local_path=_antr_module(radiant)),
-    )
     zephyr_add_prj_conf("RADIANT", True)
     zephyr_add_prj_conf("RADIANT_BACKEND_NRF", True)
+    zephyr_add_prj_conf("RADIANT_ANT_API", True)
     # the radio backend owns a 1 MHz TIMER with 5 CC channels (TIMER3/4 on nRF52);
     # TIMER3, since the NFCT driver takes TIMER4 for its errata workaround
     zephyr_add_overlay(

@@ -8,8 +8,8 @@
 #include <cstring>
 
 extern "C" {
-#include <ant_radio.h>
-#include <ant_wire.h>
+#include <radiant/radiant_ant.h>
+#include <radiant/radiant_wire.h>
 }
 
 namespace esphome::ant_plus {
@@ -35,7 +35,7 @@ static constexpr uint8_t FE_STATE_IN_USE = 3;
 // Environment
 static constexpr uint8_t ENV_PAGE_TEMPERATURE = 1;
 
-// antr_on_message() carries no context, so it reaches the instance through this
+// radiant_ant_on_message() carries no context, so it reaches the instance through this
 static AntPlus *global_ant_plus = nullptr;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
 static const char *type_name(DeviceType type) {
@@ -533,9 +533,9 @@ void AntPlusTransmitter::next_environment_page_(uint32_t n, uint8_t *page) {
 void AntPlus::setup() {
   global_ant_plus = this;
 
-  antr_err_t err = antr_init();
+  radiant_ant_err_t err = radiant_ant_init();
   if (err == 0)
-    err = antr_network_address_set(NETWORK, this->network_key_.data());
+    err = radiant_ant_network_address_set(NETWORK, this->network_key_.data());
   if (err != 0) {
     ESP_LOGE(TAG, "ANT error 0x%02X", err);
     this->mark_failed(LOG_STR("ANT setup failed"));
@@ -546,13 +546,13 @@ void AntPlus::setup() {
     // the device number is the low 16 bits of the ANT ID (0 = any). The top 4 bits
     // ride in the transmission type's upper nibble, but its lower nibble is the
     // sensor's own, so the transmission type stays a wildcard
-    err = antr_channel_assign(channel, CHANNEL_TYPE_SLAVE, NETWORK, 0);
+    err = radiant_ant_channel_assign(channel, CHANNEL_TYPE_SLAVE, NETWORK, 0);
     if (err == 0)
-      err = antr_channel_id_set(channel, device->get_ant_id() & 0xFFFF, device->ant_device_type(), 0);
+      err = radiant_ant_channel_id_set(channel, device->get_ant_id() & 0xFFFF, device->ant_device_type(), 0);
     if (err == 0)
-      err = antr_channel_period_set(channel, device->channel_period());
+      err = radiant_ant_channel_period_set(channel, device->channel_period());
     if (err == 0)
-      err = antr_channel_radio_freq_set(channel, ANT_PLUS_FREQ);
+      err = radiant_ant_channel_radio_freq_set(channel, ANT_PLUS_FREQ);
     if (err != 0 || !this->open_channel_(channel)) {
       ESP_LOGE(TAG, "Channel %u, ANT error 0x%02X", channel, err);
       this->mark_failed(LOG_STR("ANT channel setup failed"));
@@ -570,15 +570,15 @@ void AntPlus::setup() {
     uint8_t channel = this->first_transmitter_channel_ + i;
     uint8_t page[8];
     tx->next_page(page);
-    err = antr_channel_assign(channel, ANTW_CHANNEL_TYPE_MASTER, NETWORK, 0);
+    err = radiant_ant_channel_assign(channel, RADIANT_WIRE_CHANNEL_TYPE_MASTER, NETWORK, 0);
     if (err == 0)
-      err = antr_channel_id_set(channel, tx->get_ant_id() & 0xFFFF, tx->ant_device_type(), tx->transmission_type());
+      err = radiant_ant_channel_id_set(channel, tx->get_ant_id() & 0xFFFF, tx->ant_device_type(), tx->transmission_type());
     if (err == 0)
-      err = antr_channel_period_set(channel, tx->channel_period());
+      err = radiant_ant_channel_period_set(channel, tx->channel_period());
     if (err == 0)
-      err = antr_channel_radio_freq_set(channel, ANT_PLUS_FREQ);
+      err = radiant_ant_channel_radio_freq_set(channel, ANT_PLUS_FREQ);
     if (err == 0 && this->open_channel_(channel))
-      err = antr_broadcast_message_tx(channel, 8, page);
+      err = radiant_ant_broadcast_message_tx(channel, 8, page);
     if (err != 0)
       ESP_LOGW(TAG, "Transmitter channel %u setup failed: 0x%02X", channel, err);
   }
@@ -587,13 +587,13 @@ void AntPlus::setup() {
 bool AntPlus::setup_discovery_channel_(uint8_t channel) {
   // a background scan channel doesn't pair: it hears every ANT+ device on the frequency,
   // and with the device ID appended to each message the configured ones are filtered out
-  antr_err_t err = antr_lib_config_set(ANTW_LIB_CONFIG_MESG_OUT_INC_DEVICE_ID);
+  radiant_ant_err_t err = radiant_ant_lib_config_set(RADIANT_WIRE_LIB_CONFIG_MESG_OUT_INC_DEVICE_ID);
   if (err == 0)
-    err = antr_channel_assign(channel, CHANNEL_TYPE_SLAVE, NETWORK, EXT_ASSIGN_BACKGROUND_SCAN);
+    err = radiant_ant_channel_assign(channel, CHANNEL_TYPE_SLAVE, NETWORK, EXT_ASSIGN_BACKGROUND_SCAN);
   if (err == 0)
-    err = antr_channel_id_set(channel, 0, 0, 0);
+    err = radiant_ant_channel_id_set(channel, 0, 0, 0);
   if (err == 0)
-    err = antr_channel_radio_freq_set(channel, ANT_PLUS_FREQ);
+    err = radiant_ant_channel_radio_freq_set(channel, ANT_PLUS_FREQ);
   if (err != 0) {
     ESP_LOGW(TAG, "Discovery channel setup failed: 0x%02X", err);
     return false;
@@ -622,7 +622,7 @@ void AntPlus::on_discovery_message_(const Message &msg, uint32_t now) {
 }
 
 bool AntPlus::open_channel_(uint8_t channel) {
-  antr_err_t err = antr_channel_open_with_offset(channel, 0);
+  radiant_ant_err_t err = radiant_ant_channel_open_with_offset(channel, 0);
   if (err != 0)
     ESP_LOGW(TAG, "Opening channel %u failed: 0x%02X", channel, err);
   return err == 0;
@@ -637,15 +637,15 @@ void AntPlus::loop() {
     if (msg.channel >= this->first_transmitter_channel_ &&
         msg.channel < this->first_transmitter_channel_ + this->transmitters_.size()) {
       // the slot fired: queue the next page
-      if (msg.id == ANTW_MESG_RESPONSE_EVENT_ID && msg.data[0] == ANTW_EVENT_TX) {
+      if (msg.id == RADIANT_WIRE_MESG_RESPONSE_EVENT_ID && msg.data[0] == RADIANT_WIRE_EVENT_TX) {
         uint8_t page[8];
         this->transmitters_[msg.channel - this->first_transmitter_channel_]->next_page(page);
-        antr_broadcast_message_tx(msg.channel, 8, page);
+        radiant_ant_broadcast_message_tx(msg.channel, 8, page);
       }
     } else if (msg.channel < this->devices_.size() || discovery) {
-      if (msg.id == ANTW_MESG_RESPONSE_EVENT_ID) {
+      if (msg.id == RADIANT_WIRE_MESG_RESPONSE_EVENT_ID) {
         // search timed out and closed the channel: keep looking
-        if (msg.data[0] == ANTW_EVENT_CHANNEL_CLOSED)
+        if (msg.data[0] == RADIANT_WIRE_EVENT_CHANNEL_CLOSED)
           this->open_channel_(msg.channel);
       } else if (discovery) {
         this->on_discovery_message_(msg, now);
@@ -684,14 +684,14 @@ void AntPlus::dump_config() {
 
 void AntPlus::on_message(uint8_t id, const uint8_t *data, uint8_t len) {
   Message msg{};
-  if ((id == ANTW_MESG_BROADCAST_DATA_ID || id == ANTW_MESG_ACKNOWLEDGED_DATA_ID) && len >= 9) {
+  if ((id == RADIANT_WIRE_MESG_BROADCAST_DATA_ID || id == RADIANT_WIRE_MESG_ACKNOWLEDGED_DATA_ID) && len >= 9) {
     msg.id = id;
     std::memcpy(msg.data, data + 1, 8);
     // [9] flag byte, 0x80 = device ID follows in [10-13]
     if (len >= 14 && (data[9] & 0x80))
       std::memcpy(msg.device_id, data + 10, 4);
-  } else if (id == ANTW_MESG_RESPONSE_EVENT_ID && len >= 3 && data[1] == ANTW_MESG_EVENT_ID &&
-             (data[2] == ANTW_EVENT_CHANNEL_CLOSED || data[2] == ANTW_EVENT_TX)) {
+  } else if (id == RADIANT_WIRE_MESG_RESPONSE_EVENT_ID && len >= 3 && data[1] == RADIANT_WIRE_MESG_EVENT_ID &&
+             (data[2] == RADIANT_WIRE_EVENT_CHANNEL_CLOSED || data[2] == RADIANT_WIRE_EVENT_TX)) {
     msg.id = id;
     msg.data[0] = data[2];
   } else {
@@ -710,7 +710,7 @@ void AntPlus::on_message(uint8_t id, const uint8_t *data, uint8_t len) {
 }  // namespace esphome::ant_plus
 
 // RadiANT hands every message up through this, resolved at link time
-extern "C" void antr_on_message(const struct antr_msg *msg) {
+extern "C" void radiant_ant_on_message(const struct radiant_ant_msg *msg) {
   if (esphome::ant_plus::global_ant_plus != nullptr)
     esphome::ant_plus::global_ant_plus->on_message(msg->id, msg->data, msg->len);
 }

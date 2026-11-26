@@ -160,7 +160,7 @@ class AntPlusTransmitter {
 };
 
 /// ANT+ receiver on the chip's own radio, using RadiANT (clean-room ANT+ compatible
-/// link layer) through its antr_* API. One slave channel per configured device.
+/// link layer) through its radiant_ant_* API. One slave channel per configured device.
 class AntPlus : public Component {
  public:
   void setup() override;
